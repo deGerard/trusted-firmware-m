@@ -24,11 +24,16 @@
 
 struct flash_range nvm_psa_its_vect[] = {
 	{ FLASH_OTP_NV_COUNTERS_AREA_OFFSET, FLASH_ITS_AREA_OFFSET + FLASH_ITS_AREA_SIZE - 1},
+	{ FLASH_AREA_2_OFFSET, FLASH_AREA_3_OFFSET + FLASH_AREA_3_SIZE - 1},
+};
+
+struct flash_range nvm_psa_secure_range[] = {
+	{ FLASH_AREA_BL2_OFFSET, FLASH_AREA_2_OFFSET - 1  }
 };
 
 struct low_level_device FLASH0_DEV =  {
 	.erase = { .nb =sizeof(nvm_psa_its_vect)/sizeof(struct flash_range), .range = nvm_psa_its_vect},
 	.write = { .nb =sizeof(nvm_psa_its_vect)/sizeof(struct flash_range), .range = nvm_psa_its_vect},
-	.secure = { 0, NULL},
+	.secure = { .nb =sizeof(nvm_psa_secure_range)/sizeof(struct flash_range), .range = nvm_psa_secure_range},
 	.read_error = 1
 };
