@@ -67,12 +67,21 @@
 extern "C" {
 #endif /* __cplusplus */
 
+#ifdef TFM_FIH_PROFILE_ON
+
+/*
+ * Label for interacting with FIH testing tool. Can be parsed from the elf file
+ * after compilation. Does not require debug symbols.
+ */
+#define FIH_LABEL(str) __asm volatile ("FIH_LABEL_" str "_0_%=:" ::)
+#define FIH_LABEL_CRITICAL_POINT() FIH_LABEL("FIH_CRITICAL_POINT")
+
+/* Undefine the options as they are set through profiles */
 #undef FIH_ENABLE_GLOBAL_FAIL
 #undef FIH_ENABLE_CFI
 #undef FIH_ENABLE_DOUBLE_VARS
 #undef FIH_ENABLE_DELAY
 
-#ifdef TFM_FIH_PROFILE_ON
 #if defined(TFM_FIH_PROFILE_LOW)
 #define FIH_ENABLE_GLOBAL_FAIL
 #define FIH_ENABLE_CFI
@@ -89,7 +98,9 @@ extern "C" {
 #define FIH_ENABLE_CFI
 
 #else
-#error "Invalid FIH Profile configuration"
+
+#include TFM_FIH_PROFILE_CUSTOM_FILE
+
 #endif /* TFM_FIH_PROFILE */
 
 #define FIH_TRUE              0xC35A
@@ -155,10 +166,27 @@ __attribute__((noinline)) __attribute__((used)) void fih_panic_loop(void);
  * to skip.
  */
 #ifdef FIH_ENABLE_DELAY
+
 /**
  * @brief Set up the RNG for use with random delays. Called once at startup.
  */
 void fih_delay_init(void);
+
+#ifdef FIH_ENABLE_DELAY_PLATFORM
+
+/**
+ * @brief when @def FIH_ENABLE_DELAY_PLATFORM is set, the platform must provide
+ *        its own implementation of the \a fih_delay function implementing a
+ *        \a fih_delay_platform with the same prototype
+ */
+int fih_delay_platform(void);
+__attribute__((always_inline)) inline
+int fih_delay(void)
+{
+    return fih_delay_platform();
+}
+
+#else
 
 /**
  * Get a random uint8_t value from an RNG seeded with an entropy source.
@@ -194,7 +222,10 @@ int fih_delay(void)
 
     return 1;
 }
+#endif /* FIH_ENABLE_DELAY_PLATFORM */
+
 #else /* FIH_ENABLE_DELAY */
+
 #define fih_delay_init()
 
 #define fih_delay()     1
@@ -387,13 +418,6 @@ void fih_cfi_decrement(void);
 #define FIH_CFI_STEP_DECREMENT()
 #define FIH_CFI_STEP_ERR_RESET()
 #endif /* FIH_ENABLE_CFI */
-
-/*
- * Label for interacting with FIH testing tool. Can be parsed from the elf file
- * after compilation. Does not require debug symbols.
- */
-#define FIH_LABEL(str) __asm volatile ("FIH_LABEL_" str "_0_%=:" ::)
-#define FIH_LABEL_CRITICAL_POINT() FIH_LABEL("FIH_CRITICAL_POINT")
 
 /*
  * Main FIH calling macro. return variable is second argument. Does some setup

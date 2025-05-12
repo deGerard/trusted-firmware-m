@@ -13,6 +13,8 @@
 #include "cc3xx_drv.h"
 #include "tfm_log.h"
 #include "rse_zero_count.h"
+#include "rse_permanently_disable_device.h"
+#include "rse_provisioning_message_handler.h"
 
 #ifndef RSE_COMBINED_PROVISIONING_BUNDLES
 static const struct rse_cm_provisioning_values_t *values =
@@ -26,6 +28,7 @@ static const struct rse_cm_provisioning_values_t *values =
     &((const struct rse_combined_provisioning_values_t *)PROVISIONING_BUNDLE_VALUES_START)->cm;
 #endif
 
+#if !defined(RSE_CM_PROVISION_GUK) || !defined(RSE_CM_PROVISION_KP_CM) || !defined(RSE_CM_PROVISION_KCE_CM)
 static enum tfm_plat_err_t provision_derived_key(enum kmu_hardware_keyslot_t input_key,
                                                  uint32_t *input_key_buf,
                                                  uint8_t *label, size_t label_len,
@@ -38,10 +41,15 @@ static enum tfm_plat_err_t provision_derived_key(enum kmu_hardware_keyslot_t inp
     cc3xx_err_t cc_err;
     enum lcm_tp_mode_t tp_mode;
     uint32_t all_zero_key[32 / sizeof(uint32_t)] = {0};
+    enum lcm_error_t lcm_err;
 
     /* In TCI mode the KRTL isn't available, so substitute for the all-zero key
      */
-    lcm_get_tp_mode(&LCM_DEV_S, &tp_mode);
+    lcm_err = lcm_get_tp_mode(&LCM_DEV_S, &tp_mode);
+    if (lcm_err != LCM_ERROR_NONE) {
+        return (enum tfm_plat_err_t)lcm_err;
+    }
+
     if (input_key == KMU_HW_SLOT_KRTL
      && tp_mode == LCM_TP_MODE_TCI
      && input_key_buf == NULL) {
@@ -68,6 +76,7 @@ out:
 
     return err;
 }
+#endif /* !RSE_CM_PROVISION_GUK || !RSE_CM_PROVISION_KP_CM || ! !RSE_CM_PROVISION_KCE_CM */
 
 #ifndef RSE_COMBINED_PROVISIONING_BUNDLES
 __attribute__((section("DO_PROVISION"))) enum tfm_plat_err_t do_provision(void) {
@@ -82,13 +91,15 @@ enum tfm_plat_err_t do_cm_provision(void) {
     uint32_t zero_count;
 
     if (P_RSE_OTP_HEADER->device_status != 0) {
+        rse_permanently_disable_device(RSE_PERMANENT_ERROR_OTP_MODIFIED_BEFORE_CM_PROVISIONING);
         return TFM_PLAT_ERR_PROVISIONING_DEVICE_STATUS_TAMPERING_DETECTED;
     }
 
     zero_count = 8 * values->cm_area_info.size;
     err = rse_check_zero_bit_count((uint8_t *)(OTP_BASE_S + values->cm_area_info.offset),
-                                   values->cm_area_info.size, &zero_count);
+                                   values->cm_area_info.size, zero_count);
     if (err != TFM_PLAT_ERR_SUCCESS) {
+        rse_permanently_disable_device(RSE_PERMANENT_ERROR_OTP_MODIFIED_BEFORE_CM_PROVISIONING);
         return TFM_PLAT_ERR_PROVISIONING_CM_TAMPERING_DETECTED;
     }
 
@@ -113,7 +124,7 @@ enum tfm_plat_err_t do_cm_provision(void) {
                              values->kp_cm);
 #else
     err = provision_derived_key(KMU_HW_SLOT_KRTL, NULL,
-                                (uint8_t *)"KCE_CM", sizeof("KCE_CM"), NULL, 0,
+                                (uint8_t *)"KP_CM", sizeof("KP_CM"), NULL, 0,
                                 PLAT_OTP_ID_CM_PROVISIONING_KEY, 32);
 #endif
     if (err != TFM_PLAT_ERR_SUCCESS) {
@@ -183,6 +194,15 @@ enum tfm_plat_err_t do_cm_provision(void) {
     }
 #endif /* OTP_CONFIG_DM_SETS_DM_AND_DYNAMIC_AREA_SIZE */
 
+    INFO("Writing BL1_2 provisioning values\n");
+    lcm_err = lcm_otp_write(&LCM_DEV_S, values->bl1_2_area_info.offset,
+                            sizeof(values->bl1_2), (uint8_t *)(&values->bl1_2));
+    if (lcm_err != LCM_ERROR_NONE) {
+        blob_handling_status_report_error(PROVISIONING_REPORT_STEP_BL1_2_PROVISIONING, lcm_err);
+        return (enum tfm_plat_err_t)lcm_err;
+    }
+    blob_handling_status_report_continue(PROVISIONING_REPORT_STEP_BL1_2_PROVISIONING);
+
     INFO("Writing CM provisioning values\n");
     lcm_err = lcm_otp_write(&LCM_DEV_S, values->cm_area_info.offset,
                             sizeof(values->cm), (uint8_t *)(&values->cm));
@@ -190,18 +210,11 @@ enum tfm_plat_err_t do_cm_provision(void) {
         return (enum tfm_plat_err_t)lcm_err;
     }
 
-    INFO("Writing BL1_2 provisioning values\n");
-    lcm_err = lcm_otp_write(&LCM_DEV_S, values->bl1_2_area_info.offset,
-                            sizeof(values->bl1_2), (uint8_t *)(&values->bl1_2));
-    if (lcm_err != LCM_ERROR_NONE) {
-        return (enum tfm_plat_err_t)lcm_err;
-    }
-
     cc_err = cc3xx_lowlevel_rng_get_random((uint8_t *)generated_key_buf,
                                       sizeof(generated_key_buf),
-                                      CC3XX_RNG_CRYPTOGRAPHICALLY_SECURE);
+                                      CC3XX_RNG_DRBG);
     if (cc_err != CC3XX_ERR_SUCCESS) {
-      return (enum tfm_plat_err_t)cc_err;
+        return (enum tfm_plat_err_t)cc_err;
     }
 
     INFO("Provisioning HUK\n");
@@ -225,6 +238,8 @@ enum tfm_plat_err_t do_cm_provision(void) {
         return err;
     }
 
+    blob_handling_status_report_continue(PROVISIONING_REPORT_STEP_CM_PROVISIONING);
+
     INFO("Transitioning to DM LCS\n");
     new_lcs = PLAT_OTP_LCS_PSA_ROT_PROVISIONING;
     err = tfm_plat_otp_write(PLAT_OTP_ID_LCS, sizeof(new_lcs),
@@ -232,6 +247,10 @@ enum tfm_plat_err_t do_cm_provision(void) {
     if (err != TFM_PLAT_ERR_SUCCESS) {
         return err;
     }
+
+#ifndef RSE_COMBINED_PROVISIONING_BUNDLES
+    blob_provisioning_finished();
+#endif
 
     return err;
 }

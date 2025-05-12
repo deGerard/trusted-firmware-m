@@ -37,19 +37,19 @@ static void long_acc(uint8_t *acc, const uint8_t *val, size_t acc_size, size_t v
     r0 = cc3xx_lowlevel_pka_allocate_reg();
 
     /* Initialize the accumulator register with the current value of acc */
-    cc3xx_lowlevel_pka_write_reg(r0, (const uint32_t *)acc, CC3XX_DRBG_HASH_SEEDLEN);
+    cc3xx_lowlevel_pka_write_reg_swap_endian(r0, (const uint32_t *)acc, CC3XX_DRBG_HASH_SEEDLEN);
 
     /* Request another register for the value to accumulate */
     r1 = cc3xx_lowlevel_pka_allocate_reg();
 
     /* Write the value to accumulate into the register */
-    cc3xx_lowlevel_pka_write_reg(r1, (const uint32_t *)val, val_size);
+    cc3xx_lowlevel_pka_write_reg_swap_endian(r1, (const uint32_t *)val, val_size);
 
     /* Perform the actual operation */
     cc3xx_lowlevel_pka_add(r0, r1, r0);
 
     /* Read back the accumulator register */
-    cc3xx_lowlevel_pka_read_reg(r0, (uint32_t *)acc, CC3XX_DRBG_HASH_SEEDLEN);
+    cc3xx_lowlevel_pka_read_reg_swap_endian(r0, (uint32_t *)acc, CC3XX_DRBG_HASH_SEEDLEN);
 
     /* Uninit the engine */
     cc3xx_lowlevel_pka_uninit();
@@ -163,9 +163,18 @@ static cc3xx_err_t hash_gen_process(uint8_t *block_v, size_t out_len_bits, uint8
 {
     cc3xx_err_t err;
     size_t idx;
+    size_t remaining_bytes = (out_len_bits / 8) % SHA256_OUTPUT_SIZE;
     size_t gen_num_m = CEIL(out_len_bits, SHA256_OUTPUT_SIZE * 8); /* Number of hash generations */
     uint32_t data[(CC3XX_DRBG_HASH_SEEDLEN + 1) / sizeof(uint32_t)];
     uint32_t partial_last_block[SHA256_OUTPUT_SIZE / sizeof(uint32_t)];
+
+    /* Special handling of aligned requests into aligned buffer. This allows
+     * HW with particular alignment requirements to directly generate
+     * random numbers into its buffers without need for temporary buffers, i.e.
+     * generating integer number of random words into word-aligned buffers
+     */
+    const bool request_is_word_aligned =
+            !((uintptr_t) returned_bits & 0x3) && !((out_len_bits / 8) & 0x3);
 #ifdef CC3XX_CONFIG_DPA_MITIGATIONS_ENABLE
     size_t num_words_to_copy = sizeof(data) / sizeof(uint32_t);
     cc3xx_dpa_hardened_word_copy((uint32_t *)data, (uint32_t *)block_v, num_words_to_copy);
@@ -187,17 +196,13 @@ static cc3xx_err_t hash_gen_process(uint8_t *block_v, size_t out_len_bits, uint8
             return err;
         }
 
-        if (idx != gen_num_m - 1) {
-            p_output_buf = (uint32_t *)returned_bits;
+        /* We need to discriminate the case where the last generation is for a whole
+            * block or a partial block
+            */
+        if ((idx == gen_num_m - 1) && (remaining_bytes > 0)) {
+            p_output_buf = partial_last_block;
         } else {
-            /* We need to discriminate the case where the last generation is for a whole
-             * block or a partial block
-             */
-            if (out_len_bits % (SHA256_OUTPUT_SIZE * 8)) {
-                p_output_buf = partial_last_block;
-            } else {
-                p_output_buf = (uint32_t *)returned_bits;
-            }
+            p_output_buf = (uint32_t *)returned_bits;
         }
 
         cc3xx_lowlevel_hash_finish(p_output_buf, SHA256_OUTPUT_SIZE);
@@ -209,10 +214,19 @@ static cc3xx_err_t hash_gen_process(uint8_t *block_v, size_t out_len_bits, uint8
 
     returned_bits -= SHA256_OUTPUT_SIZE;
 
-    if (out_len_bits % (SHA256_OUTPUT_SIZE * 8)) {
-        memcpy(returned_bits, partial_last_block, out_len_bits % (SHA256_OUTPUT_SIZE * 8));
+    if (remaining_bytes == 0) {
+        goto finish;
     }
 
+    if (request_is_word_aligned) {
+        for (idx = 0; idx < remaining_bytes / sizeof(uint32_t); idx++) {
+            ((uint32_t *) returned_bits)[idx] = partial_last_block[idx];
+        }
+    } else {
+        memcpy(returned_bits, partial_last_block, remaining_bytes);
+    }
+
+finish:
     return CC3XX_ERR_SUCCESS;
 }
 

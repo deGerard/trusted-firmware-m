@@ -26,13 +26,17 @@ static void long_inc_int(uint32_t *acc, size_t acc_size, bool is_increment)
     r0 = cc3xx_lowlevel_pka_allocate_reg();
 
     /* Initialize the accumulator register with the current value of acc */
-    cc3xx_lowlevel_pka_write_reg(r0, (const uint32_t *)acc, CC3XX_DRBG_CTR_BLOCKLEN);
+    cc3xx_lowlevel_pka_write_reg_swap_endian(r0, (const uint32_t *)acc, CC3XX_DRBG_CTR_BLOCKLEN);
 
     /* Perform the actual operation */
-    cc3xx_lowlevel_pka_add_si(r0, is_increment ? 1 : -1, r0);
+    if (is_increment) {
+        cc3xx_lowlevel_pka_add_si(r0, 1, r0);
+    } else {
+        cc3xx_lowlevel_pka_sub_si(r0, 1, r0);
+    }
 
     /* Read back the accumulator register */
-    cc3xx_lowlevel_pka_read_reg(r0, acc, CC3XX_DRBG_CTR_BLOCKLEN);
+    cc3xx_lowlevel_pka_read_reg_swap_endian(r0, acc, CC3XX_DRBG_CTR_BLOCKLEN);
 
     /* Uninit the engine */
     cc3xx_lowlevel_pka_uninit();
@@ -64,7 +68,6 @@ static cc3xx_err_t cc3xx_drbg_ctr_update(
     const uint8_t *data, const size_t data_len)
 {
     cc3xx_err_t err;
-
     assert(data_len <= CC3XX_DRBG_CTR_SEEDLEN);
 
     long_inc((uint32_t *)state->block_v, sizeof(state->block_v));

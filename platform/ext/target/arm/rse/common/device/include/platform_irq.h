@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2023 Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * Licensed under the Apache License Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 
 #ifndef __PLATFORM_IRQ_H__
 #define __PLATFORM_IRQ_H__
+
+#include <stdint.h>
 
 typedef enum _IRQn_Type {
     NonMaskableInt_IRQn                = -14,  /* Non Maskable Interrupt */
@@ -39,7 +41,7 @@ typedef enum _IRQn_Type {
     /* Reserved                        = 6:8,     Reserved */
     MPC_IRQn                           = 9,    /* MPC Combined (Secure) Interrupt */
     PPC_IRQn                           = 10,   /* PPC Combined (Secure) Interrupt */
-    MSC_IRQn                           = 11,   /* MSC Combined (Secure) Interrput */
+    MSC_IRQn                           = 11,   /* MSC Combined (Secure) Interrupt */
     BRIDGE_ERROR_IRQn                  = 12,   /* Bridge Error Combined (Secure) Interrupt */
     /* Reserved                        = 13,      Reserved */
     PPU_Combined_IRQn                  = 14,   /* PPU Combined (Secure) Interrupt */
@@ -90,6 +92,8 @@ typedef enum _IRQn_Type {
     SRAM_ECC_Partial_Write_S_IRQn      = 61,   /* SRAM ECC Detected Partial Write (Secure) Interrupt */
     Integrity_Checker_IRQn             = 62,   /* Integrity Checker Interrupt */
     /* Reserved                        = 63:95,   Reserved */
+
+    IRQn_Type_Force_Int32_Max          = INT32_MAX, /* Force enum size to int32_t */
 } IRQn_Type;
 
 #endif  /* __PLATFORM_IRQ_H__ */

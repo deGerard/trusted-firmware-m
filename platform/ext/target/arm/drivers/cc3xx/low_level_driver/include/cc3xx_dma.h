@@ -16,7 +16,16 @@
 #include <string.h>
 #include <stdbool.h>
 
+#ifndef __PACKED_ENUM
+#define __PACKED_ENUM enum __attribute__((packed))
+#endif /* __PACKED_ENUM */
+
 #define CC3XX_DMA_BLOCK_BUF_MAX_SIZE 64
+
+__PACKED_ENUM cc3xx_dma_input_src {
+    CC3XX_DMA_INPUT_SRC_CPU_MEM = 0, /* Default state */
+    CC3XX_DMA_INPUT_SRC_RNG_SRAM,
+};
 
 struct cc3xx_dma_state_t {
     uint8_t block_buf[CC3XX_DMA_BLOCK_BUF_MAX_SIZE];
@@ -27,6 +36,7 @@ struct cc3xx_dma_state_t {
     size_t output_size;
     uint32_t remap_cpusel;
     size_t current_bytes_output;
+    enum cc3xx_dma_input_src input_src;
 };
 
 extern struct cc3xx_dma_state_t dma_state;
@@ -38,7 +48,14 @@ typedef struct {
     size_t region_size;    /*!< The size of the region that will be remapped */
     uintptr_t remap_base;  /*!< The base of the region that mapped to */
     size_t remap_cpusel_offset; /*!< How much the remap will be incremented per cpu */
+    bool valid;            /*!< Validity of the region */
 } cc3xx_dma_remap_region_t;
+
+typedef struct {
+    uintptr_t region_base; /*!< The base of the region that will be restricted */
+    size_t region_size;    /*!< The size of the region that will be restricted */
+    bool valid;            /*!< Validity of the region */
+} cc3xx_dma_burst_restricted_region_t;
 
 #endif /* CC3XX_CONFIG_DMA_REMAP_ENABLE */
 
@@ -60,13 +77,10 @@ extern "C" {
 
  * @param[in]  remap_region_idx  Which remap region should be configured and
  *                               enabled.
- * @param[in]  remap_region_idx  The configuration for the remap region.
- *
- * @return                       CC3XX_ERR_SUCCESS on success, another
- *                               cc3xx_err_t on error.
+ * @param[in]  region            The configuration for the remap region.
  */
 void cc3xx_lowlevel_dma_remap_region_init(uint32_t remap_region_idx,
-                                          cc3xx_dma_remap_region_t *region);
+                                          const cc3xx_dma_remap_region_t *region);
 /**
  * @brief                        Clear and disable a remap region.
  *
@@ -92,6 +106,22 @@ void cc3xx_lowlevel_dma_tcm_cpusel(uint32_t cpuid);
 
 #endif /* CC3XX_CONFIG_DMA_REMAP_ENABLE */
 
+#ifdef CC3XX_CONFIG_DMA_BURST_RESTRICTED_ENABLE
+/**
+ * @brief                        Configure and enable a burst restricted region.
+ *                               Any DMA input/output address that is within a
+ *                               burst restricted region will be issued as single
+ *                               AHB transaction instead of a burst incr4
+ *                               transaction.
+ *
+ * @param[in]  region_idx        Which region should be burst restricted
+ * @param[in]  region            The range of the region.
+ */
+void cc3xx_lowlevel_dma_burst_restricted_region_init(uint32_t region_idx,
+    const cc3xx_dma_burst_restricted_region_t *region);
+
+#endif /* CC3XX_CONFIG_DMA_BURST_RESTRICTED_ENABLE */
+
 /**
  * @brief             Use the cc3xx DMA to copy data directly without performing
  *                    cryptographic operations on it. This function can be used
@@ -102,6 +132,19 @@ void cc3xx_lowlevel_dma_tcm_cpusel(uint32_t cpuid);
  * @param[in]  length The size of the data.
  */
 void cc3xx_lowlevel_dma_copy_data(void* dest, const void* src, size_t length);
+
+/**
+ * @brief             Use the cc3xx DMA to copy data directly without performing
+ *                    cryptographic operations on it. This function copies data
+ *                    from RNG SRAM (within CryptoCell) to CPU memory
+ *
+ * @param[out] dest             The pointer to copy data to.
+ * @param[in]  rng_sram_offset  The offset in bytes from RNG SRAM.
+ * @param[in]  length           The size of the data.
+ */
+void cc3xx_lowlevel_dma_copy_data_from_rng_sram(void* dest,
+                                                const size_t rng_sram_offset,
+                                                size_t length);
 
 /**
  * @brief             Set the DMA input location. This triggers DMA input to be

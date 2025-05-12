@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 #-------------------------------------------------------------------------------
 # SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
 #
@@ -9,7 +8,7 @@
 import argparse
 
 import logging
-logger = logging.getLogger("TF-M")
+logger = logging.getLogger("TF-M.{}".format(__name__))
 
 from elftools.elf.elffile import ELFFile
 from file_loader import load_bytes_from_file

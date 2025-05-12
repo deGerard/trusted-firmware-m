@@ -25,6 +25,7 @@
 #include "device_definition.h"
 #include "region_defs.h"
 #include "rse_kmu_slot_ids.h"
+#include "rse_persistent_data.h"
 #include "trng.h"
 #if defined(RSE_ENABLE_TRAM)
 #include "uart_stdout.h"
@@ -202,7 +203,7 @@ extern const VECTOR_TABLE_Type __VECTOR_TABLE[];
 /*
  * This can't be inlined, since the stack push to get space for the local
  * variables is done at the start of the function, and the function which calls
- * this includes an explict stack set which removes the space allocated for
+ * this includes an explicit stack set which removes the space allocated for
  * locals.
  */
 static void __attribute__ ((noinline)) setup_tram_encryption(void) {
@@ -289,9 +290,14 @@ void Reset_Handler(void)
     __asm volatile("ldr    r9, =__etext \n");
 #endif /* RSE_SUPPORT_ROM_LIB_RELOCATION */
 
-    /* Enable cacheing, particularly to avoid ECC errors in VM0/1 */
+    /* Enable caching, particularly to avoid ECC errors in VM0/1 */
     SCB_EnableICache();
     SCB_EnableDCache();
+
+    /* Disable No-Write Allocate mode for the DCache to avoid DCache being
+     * bypassed when streaming mode is detected, e.g. during memset()
+     */
+    ICB->ACTLR |= ICB_ACTLR_DISNWAMODE_Msk;
 
 #ifdef RSE_ENABLE_TRAM
     /* Set MSP to be in VM0 to start with */
@@ -306,6 +312,8 @@ void Reset_Handler(void)
 #endif /* RSE_ENABLE_TRAM */
 
     __set_MSPLIM((uint32_t)(&__STACK_LIMIT));
+
+    rse_setup_persistent_data();
 
     SystemInit();                    /* CMSIS System Initialization */
     __PROGRAM_START();               /* Enter PreMain (C library entry point) */

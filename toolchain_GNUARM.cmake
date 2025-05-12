@@ -1,5 +1,5 @@
 #-------------------------------------------------------------------------------
-# Copyright (c) 2020-2024, Arm Limited. All rights reserved.
+# SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
 #
 # SPDX-License-Identifier: BSD-3-Clause
 #
@@ -106,23 +106,30 @@ if(GCC_VERSION VERSION_GREATER_EQUAL "8.0.0")
     endif()
 endif()
 
+file(REAL_PATH "${CMAKE_SOURCE_DIR}/../" TOP_LEVEL_PROJECT_DIR)
+
 add_compile_options(
     -specs=nano.specs
     -specs=nosys.specs
     -Wall
     -Wno-format
-    -Wno-return-type
     -Wno-unused-but-set-variable
+    -Wnull-dereference
     -c
     -fdata-sections
     -ffunction-sections
     -fno-builtin
     -fshort-enums
     -funsigned-char
+    # Strip /workspace/
+    -fmacro-prefix-map=${TOP_LEVEL_PROJECT_DIR}/=
+    # Strip /workspace/trusted-firmware-m
+    -fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=
     -mthumb
     $<$<COMPILE_LANGUAGE:C>:-std=c99>
     $<$<COMPILE_LANGUAGE:CXX>:-std=c++11>
     $<$<OR:$<BOOL:${TFM_DEBUG_SYMBOLS}>,$<BOOL:${TFM_CODE_COVERAGE}>>:-g>
+    $<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<BOOL:${TFM_DEBUG_OPTIMISATION}>,$<CONFIG:Debug>>:-Og>
     $<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<BOOL:${CONFIG_TFM_WARNINGS_ARE_ERRORS}>>:-Werror>
 )
 

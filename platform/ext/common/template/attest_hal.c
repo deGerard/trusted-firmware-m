@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2022, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -16,17 +16,17 @@
 
 static enum tfm_security_lifecycle_t map_otp_lcs_to_tfm_slc(enum plat_otp_lcs_t lcs) {
     switch (lcs) {
-        case PLAT_OTP_LCS_ASSEMBLY_AND_TEST:
-            return TFM_SLC_ASSEMBLY_AND_TEST;
-        case PLAT_OTP_LCS_PSA_ROT_PROVISIONING:
-            return TFM_SLC_PSA_ROT_PROVISIONING;
-        case PLAT_OTP_LCS_SECURED:
-            return TFM_SLC_SECURED;
-        case PLAT_OTP_LCS_DECOMMISSIONED:
-            return TFM_SLC_DECOMMISSIONED;
-        case PLAT_OTP_LCS_UNKNOWN:
-        default:
-            return TFM_SLC_UNKNOWN;
+    case PLAT_OTP_LCS_ASSEMBLY_AND_TEST:
+        return TFM_SLC_ASSEMBLY_AND_TEST;
+    case PLAT_OTP_LCS_PSA_ROT_PROVISIONING:
+        return TFM_SLC_PSA_ROT_PROVISIONING;
+    case PLAT_OTP_LCS_SECURED:
+        return TFM_SLC_SECURED;
+    case PLAT_OTP_LCS_DECOMMISSIONED:
+        return TFM_SLC_DECOMMISSIONED;
+    case PLAT_OTP_LCS_UNKNOWN:
+    default:
+        return TFM_SLC_UNKNOWN;
     }
 }
 
@@ -170,21 +170,17 @@ enum tfm_plat_err_t tfm_attest_hal_get_platform_config(uint32_t *size,
 }
 
 enum tfm_plat_err_t tfm_attest_hal_get_platform_hash_algo(uint32_t *size,
-                                                          uint8_t *buf)
+                                                          const char **buf)
 {
 #ifdef MEASUREMENT_HASH_ALGO_NAME
-    const char hash_algo[] = MEASUREMENT_HASH_ALGO_NAME;
+    static const char hash_algo[] = MEASUREMENT_HASH_ALGO_NAME;
 #else
-    const char hash_algo[] = "not-hash-extended";
+    static const char hash_algo[] = "not-hash-extended";
 #endif
 
-    if (*size < (sizeof(hash_algo) - 1)) {
-        return TFM_PLAT_ERR_SYSTEM_ERR;
-    }
-
     /* Not including the null-terminator. */
-     memcpy(buf, hash_algo, sizeof(hash_algo) - 1);
-    *size = sizeof(hash_algo) - 1;
+    *size = (uint32_t)sizeof(hash_algo) - 1;
+    *buf = hash_algo;
 
     return TFM_PLAT_ERR_SUCCESS;
 }

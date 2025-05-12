@@ -32,7 +32,7 @@
 #define TFM_HAL_FLASH_PROGRAM_UNIT      (0x1)
 
 /* Sizes of a images */
-#define FLASH_BL2_PARTITION_SIZE        (0x11000) /* BL2 partition: 68 KiB */
+#define FLASH_BL2_PARTITION_SIZE        (0x10000) /* BL2 partition: 64 KiB */
 #define FLASH_S_PARTITION_SIZE          (0x60000) /* S   partition: 384 KiB */
 #define FLASH_NS_PARTITION_SIZE         (0x60000) /* NS  partition: 384 KiB */
 #define FLASH_AP_PARTITION_SIZE         (0x80000) /* AP  partition: 512 KiB */
@@ -67,7 +67,7 @@
  */
 
 /* Sanity check that we can map the partition sizes given. The SIC tables are
- * always smaller than the partitons, so no need to check those. */
+ * always smaller than the partitions, so no need to check those. */
 #if FLASH_BL2_PARTITION_SIZE > HOST_IMAGE_MAX_SIZE \
  || FLASH_S_PARTITION_SIZE   > HOST_IMAGE_MAX_SIZE \
  || FLASH_NS_PARTITION_SIZE  > HOST_IMAGE_MAX_SIZE \

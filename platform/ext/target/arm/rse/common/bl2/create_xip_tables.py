@@ -47,7 +47,7 @@ parser.add_argument("--bl1_2_hash", help="BL1_2 hash file", required=True)
 parser.add_argument("--label", help="Label to derive the encrypt key", required=True)
 parser.add_argument("--image_version", help="Version of the image", required=True)
 parser.add_argument("--table_output_file", help="table output file", required=True)
-parser.add_argument("--encrypted_image_output_file", help="encrupted image output file", required=True)
+parser.add_argument("--encrypted_image_output_file", help="encrypted image output file", required=True)
 args = parser.parse_args()
 
 with open(args.input_image, "rb") as in_file:
@@ -68,7 +68,6 @@ else:
 
 digest = hashes.Hash(hashes.SHA256())
 digest.update(int("0x111155AA", 16).to_bytes(4, 'little'))
-digest.update(int("0x00000003", 16).to_bytes(4, 'little')) #LCS
 digest.update(int("0x00000000", 16).to_bytes(4, 'little')) #reprovisioning bits
 digest.update(bl1_2_hash)
 data_hash = digest.finalize()

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2022, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -8,7 +8,8 @@
 #define __TFM_UTILS_H__
 
 #include <string.h>
-#include "tfm_spm_log.h"
+#include <stdint.h>
+#include "tfm_log.h"
 
 /*
  * CPU spin here.
@@ -16,12 +17,16 @@
  */
 void tfm_core_panic(void);
 
+/*
+ * Accessor function to get the value of the spm_boundary
+ */
+uintptr_t get_spm_boundary(void);
+
 /* Get container structure start address from member */
 #define TO_CONTAINER(ptr, type, member) \
     ((type *)((unsigned long)(ptr) - offsetof(type, member)))
 
-/* FixMe: Replace ERROR_MSG() in platform code with a suitable API */
-#define ERROR_MSG(msg) SPMLOG_ERRMSG(msg "\r\n")
+#define ERROR_MSG(msg) ERROR_RAW(msg "\n")
 
 /* Stringify preprocessors, no leading underscore. ('STRINGIFY') */
 #define STRINGIFY_EXPAND(x) #x

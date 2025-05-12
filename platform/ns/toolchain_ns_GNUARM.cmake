@@ -1,5 +1,5 @@
 #-------------------------------------------------------------------------------
-# Copyright (c) 2020-2024, Arm Limited. All rights reserved.
+# SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
 #
 # SPDX-License-Identifier: BSD-3-Clause
 #
@@ -176,24 +176,31 @@ string(APPEND CMAKE_ASM_LINK_FLAGS " " ${LINKER_CP_OPTION})
 # For GNU Arm Embedded Toolchain doesn't emit __ARM_ARCH_8_1M_MAIN__, adding this macro manually.
 add_compile_definitions($<$<STREQUAL:${TFM_SYSTEM_ARCHITECTURE},armv8.1-m.main>:__ARM_ARCH_8_1M_MAIN__=1>)
 
+file(REAL_PATH "${CMAKE_SOURCE_DIR}/../" TOP_LEVEL_PROJECT_DIR)
+
 add_compile_options(
     -specs=nano.specs
     -specs=nosys.specs
     -Wall
     -Wno-format
-    -Wno-return-type
     -Wno-unused-but-set-variable
+    -Wnull-dereference
     -c
     -fdata-sections
     -ffunction-sections
     -fno-builtin
     -fshort-enums
     -funsigned-char
+    # Strip /workspace/
+    -fmacro-prefix-map=${TOP_LEVEL_PROJECT_DIR}/=
+    # Strip /workspace/trusted-firmware-m
+    -fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=
     -mthumb
     $<$<COMPILE_LANGUAGE:C>:-std=c99>
     $<$<COMPILE_LANGUAGE:CXX>:-std=c++11>
     $<$<AND:$<COMPILE_LANGUAGE:C>,$<BOOL:${TFM_DEBUG_SYMBOLS}>>:-g>
     $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<BOOL:${TFM_DEBUG_SYMBOLS}>>:-g>
+    $<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<BOOL:${TFM_DEBUG_OPTIMISATION}>,$<CONFIG:Debug>>:-Og>
     $<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<BOOL:${CONFIG_TFM_WARNINGS_ARE_ERRORS}>>:-Werror>
 )
 

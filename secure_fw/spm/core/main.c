@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2023, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -13,7 +13,7 @@
 #include "spm.h"
 #include "tfm_hal_isolation.h"
 #include "tfm_hal_platform.h"
-#include "tfm_spm_log.h"
+#include "tfm_log.h"
 #include "tfm_version.h"
 #include "tfm_plat_otp.h"
 #include "tfm_plat_provisioning.h"
@@ -23,7 +23,7 @@
 #include "prof_intf_s.h"
 #endif
 
-uintptr_t spm_boundary = (uintptr_t)NULL;
+static uintptr_t g_spm_boundary;
 
 static fih_int tfm_core_init(void)
 {
@@ -34,7 +34,7 @@ static fih_int tfm_core_init(void)
      * Access to any peripheral should be performed after programming
      * the necessary security components such as PPC/SAU.
      */
-    FIH_CALL(tfm_hal_set_up_static_boundaries, fih_rc, &spm_boundary);
+    FIH_CALL(tfm_hal_set_up_static_boundaries, fih_rc, &g_spm_boundary);
     if (fih_not_eq(fih_rc, fih_int_encode(TFM_HAL_SUCCESS))) {
         FIH_RET(fih_int_encode(SPM_ERROR_GENERIC));
     }
@@ -51,10 +51,11 @@ static fih_int tfm_core_init(void)
     }
 
     /*
-     * Print the TF-M version now that the platform has initialized
-     * the logging backend.
+     * Print the TF-M version and timestamp now that the platform
+     * has initialized the logging backend.
      */
-    SPMLOG_INFMSG("\033[1;34mBooting TF-M "VERSION_FULLSTR"\033[0m\r\n");
+    NOTICE("Booting TF-M \033[1;34m"VERSION_FULLSTR"\033[0m\n");
+    NOTICE("Built \033[1;34m"BUILD_TIMESTAMP" UTC\033[0m\n");
 
     plat_err = tfm_plat_otp_init();
     if (plat_err != TFM_PLAT_ERR_SUCCESS) {
@@ -74,22 +75,25 @@ static fih_int tfm_core_init(void)
     /* Configures architecture */
     tfm_arch_config_extensions();
 
-    SPMLOG_INFMSG("\033[1;34m[Sec Thread] Secure image initializing!\033[0m\r\n");
-
-    SPMLOG_DBGMSGVAL("TF-M isolation level is: ", TFM_ISOLATION_LEVEL);
+    VERBOSE("Isolation level is: %u\n", TFM_ISOLATION_LEVEL);
 
 #if (CONFIG_TFM_FLOAT_ABI == 2)
-    SPMLOG_INFMSG("TF-M Float ABI: Hard\r\n");
+    INFO("Float ABI: Hard, Lazy stacking ");
 #ifdef CONFIG_TFM_LAZY_STACKING
-    SPMLOG_INFMSG("Lazy stacking enabled\r\n");
+    INFO_RAW("enabled\n");
 #else
-    SPMLOG_INFMSG("Lazy stacking disabled\r\n");
+    INFO_RAW("disabled\n");
 #endif
 #endif
 
     tfm_core_validate_boot_data();
 
     FIH_RET(fih_int_encode(SPM_SUCCESS));
+}
+
+uintptr_t get_spm_boundary(void)
+{
+    return g_spm_boundary;
 }
 
 int main(void)

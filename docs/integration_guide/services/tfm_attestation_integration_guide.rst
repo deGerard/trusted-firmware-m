@@ -166,13 +166,15 @@ Service source files
     - ``lib/ext/t_cose``: This library is used to sign a CBOR token and create
       the COSE header and signature around the initial attestation token. Only
       a subset of the `COSE <https://tools.ietf.org/html/rfc8152>`__ standard
-      is implemented. The COSE_Sign1 and COSE_Mac0 (only available in TF-M fork)
-      signature schemas are supported.
-    - It is a fork of this external `t_cose library <https://github.com/laurencelundblade/t_cose>`__.
-    - ``lib/ext/t_cose/src/t_cose_crypto.h``: Expose an API to bind ``t_cose``
+      is implemented. The COSE_Sign, COSE_Sign1, COSE_Mac0 signature and the
+      COSE_Encrypt, COSE_Encrypt0 encryption schemes are supported.
+      Its source code is fetched automatically during the build configuration
+      step from an external repository: `t_cose library <https://github.com/laurencelundblade/t_cose>`__.
+    - ``<t_cose_src>/src/t_cose_crypto.h``: Expose an API to bind ``t_cose``
       library with available crypto library in the device.
-    - ``lib/ext/t_cose/crypto_adapters/t_cose_psa_crypto.c``: Implements the
+    - ``<t_cose_src>/crypto_adapters/t_cose_psa_crypto.c``: Implements the
       exposed API and ports ``t_cose`` to the PSA Crypto API.
+
 - Initial Attestation Service:
     - ``attest_core.c`` : Implements core functionalities such as implementation
       of APIs, retrieval of claims and token creation.
@@ -500,15 +502,6 @@ those flags. The list of flags are:
   on the value of this flag. Default value: OFF.
 - ``SYMMETRIC_INITIAL_ATTESTATION``: Select symmetric initial attestation.
   Default value: OFF.
-- ``ATTEST_INCLUDE_TEST_CODE``: The initial attestation implementation is
-  instrumented with additional test code. This is required in order to run
-  some of the initial attestation regression tests.
-  These tests are not required to be run by platform integrators, and are
-  only meant to be used for development or modification of the initial
-  attestation implementation.
-  Enabling this option enables T_COSE_DISABLE_SHORT_CIRCUIT_SIGN which will
-  short circuit the signing operation.
-  Default value: OFF.
 - ``ATTEST_STACK_SIZE``- Defines the stack size of the Initial Attestation
   Partition. This value mainly depends on the build type(debug, release and
   minisizerel) and compiler.
@@ -653,4 +646,6 @@ that user has license for DS-5 and FVP models:
 
 --------------
 
-*Copyright (c) 2018-2024, Arm Limited. All rights reserved.*
+*SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors*
+
+*SPDX-License-Identifier: BSD-3-Clause*

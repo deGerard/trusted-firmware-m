@@ -28,6 +28,7 @@ set(INSTALL_CONFIG_DIR                  ${CMAKE_INSTALL_PREFIX}/config)
 set(INSTALL_PLATFORM_NS_DIR             ${CMAKE_INSTALL_PREFIX}/platform)
 
 set(TFM_DEBUG_SYMBOLS                   ON          CACHE BOOL      "Add debug symbols. Note that setting CMAKE_BUILD_TYPE to Debug or RelWithDebInfo will also add debug symbols.")
+set(TFM_DEBUG_OPTIMISATION              OFF         CACHE BOOL      "Add basic -Og optimisation when CMAKE_BUILD_TYPE is Debug. Note that non Debug builds specify their own optimisation")
 set(TFM_CODE_COVERAGE                   OFF         CACHE BOOL      "Whether to build the binary for lcov tools")
 
 set(TFM_TESTS_REVISION_CHECKS           ON          CACHE BOOL      "Whether to perform checks on the tf-m-tests repository revision.")
@@ -37,11 +38,14 @@ set(PROJECT_CONFIG_HEADER_FILE          ""          CACHE FILEPATH  "User define
 # External libraries source and version
 set(MBEDCRYPTO_PATH                     "DOWNLOAD"  CACHE PATH      "Path to Mbed Crypto (or DOWNLOAD to fetch automatically")
 set(MBEDCRYPTO_FORCE_PATCH              OFF         CACHE BOOL      "Always apply MBed Crypto patches")
-set(MBEDCRYPTO_VERSION                  "mbedtls-3.6.2" CACHE STRING "The version of Mbed Crypto to use")
+set(MBEDCRYPTO_VERSION                  "mbedtls-3.6.3" CACHE STRING "The version of Mbed Crypto to use")
 set(MBEDCRYPTO_GIT_REMOTE               "https://github.com/Mbed-TLS/mbedtls.git" CACHE STRING "The URL (or path) to retrieve MbedTLS from.")
 
 set(MCUBOOT_PATH                        "DOWNLOAD"  CACHE PATH      "Path to MCUboot (or DOWNLOAD to fetch automatically")
-set(MCUBOOT_VERSION                     "6071ceb"    CACHE STRING    "The version of MCUboot to use")
+set(MCUBOOT_VERSION                     "v2.2.0-rc1" CACHE STRING   "The version of MCUboot to use")
+
+set(TFM_EXTRAS_REPO_PATH                "DOWNLOAD"  CACHE PATH      "Path to tf-m-extras repo (or DOWNLOAD to fetch automatically")
+set(TFM_EXTRAS_REPO_VERSION             "8679c4c"   CACHE STRING    "The version of tf-m-extras to use")
 
 set(PLATFORM_PSA_ADAC_SECURE_DEBUG      FALSE       CACHE BOOL      "Whether to use psa-adac secure debug.")
 set(PLATFORM_PSA_ADAC_SOURCE_PATH       "DOWNLOAD"  CACHE PATH      "Path to source dir of psa-adac.")
@@ -121,6 +125,7 @@ set(PLATFORM_DEFAULT_ROTPK              ON          CACHE BOOL      "Use default
 set(PLATFORM_DEFAULT_IAK                ON          CACHE BOOL      "Use default initial attestation_key.")
 set(PLATFORM_DEFAULT_UART_STDOUT        ON          CACHE BOOL      "Use default uart stdout implementation.")
 set(PLATFORM_DEFAULT_NV_SEED            ON          CACHE BOOL      "Use default NV seed implementation.")
+set(PLATFORM_DEFAULT_SHARED_MEASUREMENT_DATA ON     CACHE BOOL      "Use default shared measurement data location")
 set(PLATFORM_DEFAULT_OTP                ON          CACHE BOOL      "Use trusted on-chip flash to implement OTP memory")
 set(PLATFORM_DEFAULT_OTP_WRITEABLE      ON          CACHE BOOL      "Use OTP memory with write support")
 set(PLATFORM_DEFAULT_PROVISIONING       ON          CACHE BOOL      "Use default provisioning implementation")
@@ -149,7 +154,6 @@ set(CRYPTO_TFM_BUILTIN_KEYS_DRIVER      ON          CACHE BOOL      "Whether to 
 
 set(TFM_PARTITION_INITIAL_ATTESTATION   OFF         CACHE BOOL      "Enable Initial Attestation partition")
 set(SYMMETRIC_INITIAL_ATTESTATION       OFF         CACHE BOOL      "Use symmetric crypto for inital attestation")
-set(ATTEST_INCLUDE_TEST_CODE            OFF         CACHE BOOL      "Include minimal development tests in the initial attestation regression test suite")
 set(ATTEST_KEY_BITS                     256         CACHE STRING    "The size of the initial attestation key in bits")
 set(PSA_INITIAL_ATTEST_MAX_TOKEN_SIZE   0x250       CACHE STRING    "The maximum possible size of a token")
 

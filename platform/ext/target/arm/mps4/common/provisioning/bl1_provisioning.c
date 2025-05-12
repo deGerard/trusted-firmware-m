@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -48,7 +48,10 @@ static enum tfm_plat_err_t enable_sp_mode(void)
     enum lcm_bool_t sp_enabled;
     enum lcm_error_t lcm_err;
 
-    lcm_get_sp_enabled(&LCM_DEV_S, &sp_enabled);
+    lcm_err = lcm_get_sp_enabled(&LCM_DEV_S, &sp_enabled);
+    if (lcm_err != LCM_ERROR_NONE) {
+        return (enum tfm_plat_err_t)lcm_err;
+    }
 
     if (sp_enabled != LCM_TRUE) {
         INFO("Enabling secure provisioning mode, system will now reset.\n");
@@ -143,7 +146,11 @@ enum tfm_plat_err_t tfm_plat_provisioning_perform(void)
 
     INFO("Beginning provisioning\n");
 
-    lcm_get_tp_mode(&LCM_DEV_S, &tp_mode);
+    lcm_err = lcm_get_tp_mode(&LCM_DEV_S, &tp_mode);
+    if (lcm_err != LCM_ERROR_NONE) {
+        return TFM_PLAT_ERR_SYSTEM_ERR;
+    }
+
     if (tp_mode == LCM_TP_MODE_VIRGIN) {
         err = set_tp_mode();
         if (err != TFM_PLAT_ERR_SUCCESS) {

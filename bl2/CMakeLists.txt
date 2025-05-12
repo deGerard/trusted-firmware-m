@@ -7,6 +7,8 @@
 
 cmake_minimum_required(VERSION 3.21)
 
+find_package(Python3)
+
 project("Bootloader" VERSION 0.1.0 LANGUAGES C ASM)
 
 ############################### BL2_CRYPTO_CONFIG ##############################
@@ -108,7 +110,8 @@ target_link_libraries(bl2_crypto
 )
 
 string(TOLOWER "${CMAKE_BUILD_TYPE}" BUILD_TYPE_LOWER)
-if (${BUILD_TYPE_LOWER} STREQUAL "debug")
+# IAR only allows 1 optimization option for the compilation unit
+if (${BUILD_TYPE_LOWER} STREQUAL "debug" AND NOT ${CMAKE_C_COMPILER_ID} STREQUAL "IAR")
     set_source_files_properties(${BL2_CRYPTO_SRC}
         PROPERTIES COMPILE_FLAGS -Os
     )
@@ -118,7 +121,7 @@ endif()
 
 add_executable(bl2
     src/flash_map.c
-    $<$<C_COMPILER_ID:Clang>:src/crt_exit.c>
+    src/crt_exit.c
     $<$<BOOL:${DEFAULT_MCUBOOT_SECURITY_COUNTERS}>:src/security_cnt.c>
     $<$<BOOL:${DEFAULT_MCUBOOT_FLASH_MAP}>:src/default_flash_map.c>
     $<$<BOOL:${MCUBOOT_DATA_SHARING}>:src/shared_data.c>

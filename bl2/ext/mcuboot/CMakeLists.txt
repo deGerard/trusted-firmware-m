@@ -1,11 +1,21 @@
 #------------------------------------------------------------------------------
-# Copyright (c) 2020-2024, Arm Limited. All rights reserved.
+# SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
 #
 # SPDX-License-Identifier: BSD-3-Clause
 #
 #------------------------------------------------------------------------------
 
 cmake_minimum_required(VERSION 3.21)
+
+fetch_remote_library(
+    LIB_NAME                mcuboot
+    LIB_SOURCE_PATH_VAR     MCUBOOT_PATH
+    FETCH_CONTENT_ARGS
+        GIT_REPOSITORY      https://github.com/mcu-tools/mcuboot.git
+        GIT_TAG             ${MCUBOOT_VERSION}
+        GIT_PROGRESS        TRUE
+        GIT_SUBMODULES      "${MCUBOOT_SUBMODULES}"
+)
 
 add_library(mcuboot_config INTERFACE)
 
@@ -71,9 +81,6 @@ target_link_libraries(bl2
     PUBLIC
         bootutil
 )
-
-set(MCUBOOT_ALLOWED_LOG_LEVELS OFF ERROR WARNING INFO DEBUG)
-list(FIND MCUBOOT_ALLOWED_LOG_LEVELS ${MCUBOOT_LOG_LEVEL} LOG_LEVEL_ID)
 
 if (MCUBOOT_ALIGN_VAL GREATER 8)
 set (MCUBOOT_BOOT_MAX_ALIGN ${MCUBOOT_ALIGN_VAL})

@@ -49,7 +49,7 @@ extern "C" {
  * and match the target offset specified in download script.
  */
 #include <inttypes.h>
-#include "region_defs.h"
+#include "tfm_plat_shared_measurement_data.h"
 #include "Driver_Flash.h"
 
 /*
@@ -64,12 +64,8 @@ extern "C" {
 /*
  * Shared data area between bootloader and runtime firmware.
  */
-#if (defined(SHARED_BOOT_MEASUREMENT_BASE) && defined(SHARED_BOOT_MEASUREMENT_SIZE))
-#define MCUBOOT_SHARED_DATA_BASE    SHARED_BOOT_MEASUREMENT_BASE
-#define MCUBOOT_SHARED_DATA_SIZE    SHARED_BOOT_MEASUREMENT_SIZE
-#else
-#error "SHARED_BOOT_MEASUREMENT_* must be defined by target."
-#endif
+#define MCUBOOT_SHARED_DATA_BASE (tfm_plat_get_shared_measurement_data_base())
+#define MCUBOOT_SHARED_DATA_SIZE (tfm_plat_get_shared_measurement_data_size())
 
 /**
  * @brief Structure describing an area on a flash device.
@@ -164,6 +160,22 @@ uint32_t flash_area_align(const struct flash_area *area);
  */
 int flash_area_get_sectors(int fa_id, uint32_t *count,
   struct flash_sector *sectors);
+
+/* Retrieve the flash sector a given offset belongs to.
+ *
+ * Returns 0 on success, or an error code on failure.
+ */
+int flash_area_sector_from_off(uint32_t off, struct flash_sector *sector);
+
+/* Retrieve the flash sector a given offset, within flash area.
+ *
+ * @param fa        flash area.
+ * @param off       offset of sector.
+ * @param sector    pointer to structure for obtained information.
+ * Returns 0 on success, or an error code on failure.
+ */
+int flash_area_get_sector(const struct flash_area *fa, uint32_t off,
+  struct flash_sector *sector);
 
 /*
  * Similar to flash_area_get_sectors(), but return the values in an

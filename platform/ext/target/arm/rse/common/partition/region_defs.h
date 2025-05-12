@@ -28,19 +28,19 @@
 #include "bl1_2_config.h"
 
 /* RSE memory layout is as follows during BL1
- *      |----------------------------------------|
- * DTCM | BOOT_SHARED | BL1_1_DATA | BL1_2_DATA  |
- *      |----------------------------------------|
+ *      |----------------------------------------------------|
+ * DTCM | BLOB_DATA | BOOT_SHARED | BL1_1_DATA | BL1_2_DATA  |
+ *      |----------------------------------------------------|
  *
- *      |----------------------------------------|
- * ITCM | BL1_2_CODE  |                          |
- *      |----------------------------------------|
+ *      |----------------------------------------------------|
+ * ITCM | BLOB_CODE | BL1_2_CODE  |                          |
+ *      |----------------------------------------------------|
  *
  *      |---------------------------------------------------------
  * VM0  |                                                        |
  *      |---------------------------------------------------------
  *      |---------------------------------------------------------
- * VM1  |                                                        |
+ * VM1  |                            | PERS_DATA | OTP_EMULATION |
  *      |---------------------------------------------------------
  *
  * If the size of VM0 and VM1 are larger than 64KiB, the size of BL1 code/data
@@ -52,18 +52,15 @@
  *      |----------------------------------------|
  *
  *      |---------------------------------------------------------
- * VM0  | BL2_CODE --->                                          |
+ * VM0  | BL2_CODE                                               |
  *      |---------------------------------------------------------
  *      |---------------------------------------------------------
- * VM1  | BL2_CODE  <--- | XIP tables  | BL2_DATA                |
+ * VM1  |  XIP tables  | BL2_DATA  | PERS_DATA | OTP_EMULATION   |
  *      |---------------------------------------------------------
  *
  * If the size of VM0 and VM1 are larger than 64KiB, the size of BL2 code can be
  * increased to fill the extra space. Note that BL2 code is aligned to the start
- * of S_DATA, so under non-XIP mode it will not start at the beginning of VM0. If
- * BL2_CODE is increased to be larger than VM0, it spills on VM1 and accordingly
- * XIP tables and BL2_DATA get shifted to the right and BL2_DATA reduces to fit
- * the remaining space in VM1.
+ * of S_DATA, so under non-XIP mode it will not start at the beginning of VM0.
  *
  * RSE memory layout is as follows during Runtime with XIP mode enabled
  *      |----------------------------------------|
@@ -74,7 +71,7 @@
  * VM0  | S_DATA                                                 |
  *      |---------------------------------------------------------
  *      |---------------------------------------------------------
- * VM1  | S_DATA                     | NS_DATA                   |
+ * VM1  | S_DATA         | NS_DATA   | PERS_DATA | OTP_EMULATION |
  *      |---------------------------------------------------------
  *
  * RSE memory layout is as follows during Runtime with XIP mode disabled. Note
@@ -88,15 +85,13 @@
  * VM0  | S_CODE                                           | S_DATA            |
  *      |----------------------------------------------------------------------|
  *      |----------------------------------------------------------------------|
- * VM1  |  NS_DATA          | NS_CODE                                          |
+ * VM1  |  NS_DATA          | NS_CODE          | PERS_DATA | OTP_EMULATION     |
  *      |----------------------------------------------------------------------|
  */
 
-#define BL1_1_HEAP_SIZE         (0x0001000)
-#define BL1_1_MSP_STACK_SIZE    (0x0001800)
-
-#define BL1_2_HEAP_SIZE         (0x0001000)
-#define BL1_2_MSP_STACK_SIZE    (0x0001800)
+/* Heap and stack shared between BL1_1 and BL1_2 */
+#define BL1_HEAP_SIZE           (0x0001000)
+#define BL1_MSP_STACK_SIZE      (0x0001800)
 
 #define BL2_HEAP_SIZE           (0x0001000)
 #define BL2_MSP_STACK_SIZE      (0x0002000)
@@ -106,6 +101,27 @@
 
 #define NS_HEAP_SIZE            (0x0001000)
 #define NS_STACK_SIZE           (0x0001000)
+
+/* Store persistent data at the end of VM1 as will not be cleared on reset */
+#define PERSISTENT_DATA_SIZE (0x400)
+#define PERSISTENT_DATA_BASE \
+    ((VM1_BASE_S + VM1_SIZE) - PERSISTENT_DATA_SIZE - RSE_OTP_EMULATION_SRAM_SIZE)
+#define PERSISTENT_DATA_LIMIT ((PERSISTENT_DATA_BASE + PERSISTENT_DATA_SIZE) - 1)
+
+/* SRAM allocated to store data when using OTP emulation mode.
+ * This must match the size of the OTP
+ */
+#ifdef RSE_USE_OTP_EMULATION_IN_SRAM
+#define RSE_OTP_EMULATION_SRAM_SIZE     (0x4000)
+#define RSE_OTP_EMULATION_SRAM_START    ((VM1_BASE_S + VM1_SIZE) - RSE_OTP_EMULATION_SRAM_SIZE)
+
+#if RSE_OTP_EMULATION_SRAM_START % RSE_OTP_EMULATION_SRAM_SIZE != 0
+#error RSE OTP Emulation SRAM must have alignment of its size
+#endif
+
+#else
+#define RSE_OTP_EMULATION_SRAM_SIZE     (0x0)
+#endif /* RSE_USE_OTP_EMULATION_IN_SRAM */
 
 /* This size of buffer is big enough to store an array of all the
  * boot records/measurements which is encoded in CBOR format.
@@ -147,15 +163,13 @@
 /* Secure Data stored in VM0. Size defined in flash layout */
 #ifdef RSE_XIP
 #define S_DATA_START    (VM0_BASE_S)
-#define S_DATA_SIZE     (VM0_SIZE + VM1_SIZE - NS_DATA_SIZE)
+#define S_DATA_SIZE \
+    (VM0_SIZE + VM1_SIZE - NS_DATA_SIZE - PERSISTENT_DATA_SIZE - RSE_OTP_EMULATION_SRAM_SIZE)
 #else
 #define S_DATA_START    (VM0_BASE_S + FLASH_S_PARTITION_SIZE)
 #define S_DATA_SIZE     (VM0_SIZE - FLASH_S_PARTITION_SIZE)
 #endif /* RSE_XIP */
 #define S_DATA_LIMIT    (S_DATA_START + S_DATA_SIZE - 1)
-
-/* Size of vector table: 111 interrupt handlers + 4 bytes MSP initial value */
-#define S_CODE_VECTOR_TABLE_SIZE    (0x1C0)
 
 /* Non-secure regions */
 /* Non-Secure Code executes from VM1, or XIP from flash via the SIC */
@@ -178,7 +192,8 @@
  * of VM1) so platforms should instead alter the size of the NS image.
  */
 #undef  NS_DATA_SIZE
-#define NS_DATA_SIZE    (VM1_SIZE - FLASH_NS_PARTITION_SIZE)
+#define NS_DATA_SIZE \
+    (VM1_SIZE - FLASH_NS_PARTITION_SIZE - PERSISTENT_DATA_SIZE - RSE_OTP_EMULATION_SRAM_SIZE)
 #endif
 #define NS_DATA_LIMIT   (NS_DATA_START + NS_DATA_SIZE - 1)
 
@@ -193,10 +208,21 @@
 #define SECONDARY_PARTITION_START (FWU_HOST_IMAGE_BASE_S)
 #define SECONDARY_PARTITION_SIZE (HOST_IMAGE_MAX_SIZE)
 
+/* RSE test binary is XIP from ROM */
+#if defined(RSE_BL1_TEST_BINARY) && defined(RSE_TEST_BINARY_IN_ROM)
+#define RSE_TESTS_CODE_START (ROM_BASE_S + ROM_SIZE - ROM_DMA_ICS_SIZE - RSE_TESTS_CODE_SIZE)
+#define RSE_TESTS_CODE_SIZE  (0x8000) /* 32 KiB */
+#define RSE_TESTS_DATA_START VM0_BASE_S
+#define RSE_TESTS_DATA_SIZE  VM0_SIZE + VM1_SIZE
+#else
+#define RSE_TESTS_CODE_SIZE  (0x0)
+#define RSE_TESTS_DATA_SIZE  (0x0)
+#endif /* defined(RSE_BL1_TEST_BINARY) && defined(RSE_TEST_BINARY_IN_ROM) */
+
 /* Bootloader regions */
 /* BL1_1 is XIP from ROM */
 #define BL1_1_CODE_START  (ROM_BASE_S)
-#define BL1_1_CODE_SIZE   (0x10000) /* 64 KiB */
+#define BL1_1_CODE_SIZE   (ROM_SIZE - ROM_DMA_ICS_SIZE - RSE_TESTS_CODE_SIZE)
 #define BL1_1_CODE_LIMIT  (BL1_1_CODE_START + BL1_1_CODE_SIZE - 1)
 
 #define PROVISIONING_DATA_START (BL1_1_CODE_START + BL1_1_CODE_SIZE)
@@ -204,7 +230,7 @@
 #define PROVISIONING_DATA_LIMIT (PROVISIONING_DATA_START + PROVISIONING_DATA_SIZE - 1)
 
 /* BL1_2 is in the ITCM */
-#define BL1_2_CODE_START  (ITCM_BASE_S)
+#define BL1_2_CODE_START  (PROVISIONING_BUNDLE_CODE_START + PROVISIONING_BUNDLE_CODE_SIZE)
 #define BL1_2_CODE_SIZE   (0x2000) /* 8 KiB */
 #define BL1_2_CODE_LIMIT  (BL1_2_CODE_START + BL1_2_CODE_SIZE - 1)
 
@@ -216,11 +242,11 @@
 
 /* BL1 data is in DTCM */
 #define BL1_1_DATA_START  (BOOT_TFM_SHARED_DATA_BASE + BOOT_TFM_SHARED_DATA_SIZE)
-#define BL1_1_DATA_SIZE   ((DTCM_SIZE - BOOT_TFM_SHARED_DATA_SIZE) / 2)
+#define BL1_1_DATA_SIZE   (0x4800) /* 18 KiB */
 #define BL1_1_DATA_LIMIT  (BL1_1_DATA_START + BL1_1_DATA_SIZE - 1)
 
 #define BL1_2_DATA_START  (BL1_1_DATA_START + BL1_1_DATA_SIZE)
-#define BL1_2_DATA_SIZE   ((DTCM_SIZE - BOOT_TFM_SHARED_DATA_SIZE) / 2)
+#define BL1_2_DATA_SIZE   (0x800) /* 2 KiB */
 #define BL1_2_DATA_LIMIT  (BL1_2_DATA_START + BL1_2_DATA_SIZE - 1)
 
 /* XIP data goes after the BL2 image */
@@ -232,15 +258,44 @@
  * runtime driver supports DMA remapping.
  */
 #define BL2_DATA_START    (BL2_XIP_TABLES_START + BL2_XIP_TABLES_SIZE)
-#define BL2_DATA_SIZE     (VM0_SIZE + VM1_SIZE - BL2_XIP_TABLES_SIZE - FLASH_BL2_PARTITION_SIZE)
+#define BL2_DATA_SIZE                                                                              \
+    (VM0_SIZE + VM1_SIZE - BL2_XIP_TABLES_SIZE - FLASH_BL2_PARTITION_SIZE - PERSISTENT_DATA_SIZE - \
+     RSE_OTP_EMULATION_SRAM_SIZE)
 #define BL2_DATA_LIMIT    (BL2_DATA_START + BL2_DATA_SIZE - 1)
 
-#if BL2_DATA_SIZE < 0
-#error FLASH_BL2_PARTITION_SIZE + BL2_DATA_SIZE + 2 * FLASH_SIC_TABLE_SIZE is too large to fit in RSE SRAM
+/* We use various calculations which give some sections space remaining
+ * after removing the size of other sections. Verify that all
+ * of those calculations are valid here */
+#if BL1_1_CODE_SIZE < 0 || \
+    BL1_1_DATA_SIZE < 0 || \
+    BL1_2_CODE_SIZE < 0 || \
+    BL1_2_DATA_SIZE < 0 || \
+    BL2_CODE_SIZE < 0 || \
+    BL2_DATA_SIZE < 0 || \
+    S_CODE_SIZE < 0 || \
+    S_DATA_SIZE < 0 || \
+    NS_CODE_SIZE < 0 || \
+    NS_DATA_SIZE < 0
+#error Partition size calculations incorrect
 #endif
 
-/* Store boot data at the start of the DTCM. */
-#define BOOT_TFM_SHARED_DATA_BASE DTCM_BASE_S
+#if ((BL2_CODE_SIZE + BL2_XIP_TABLES_SIZE + BL2_DATA_SIZE + PERSISTENT_DATA_SIZE + \
+      RSE_OTP_EMULATION_SRAM_SIZE) > (VM0_SIZE + VM1_SIZE))
+#error BL2 partitions do not fit in SRAM
+#endif
+
+#if defined(RSE_XIP) && ((S_DATA_SIZE + NS_DATA_SIZE + PERSISTENT_DATA_SIZE + \
+                          RSE_OTP_EMULATION_SRAM_SIZE) > (VM0_SIZE + VM1_SIZE))
+#error XIP enabled runtime partitions do not fit in SRAM
+#elif !defined(RSE_XIP) &&                                                             \
+    ((S_CODE_SIZE + S_DATA_SIZE + NS_CODE_SIZE + NS_DATA_SIZE + PERSISTENT_DATA_SIZE + \
+      RSE_OTP_EMULATION_SRAM_SIZE) > (VM0_SIZE + VM1_SIZE))
+#error XIP disabled runtime partitions do not fit in SRAM
+#endif
+
+/* TODO: Shared data can be placed in the SRAM. Move it there
+ * so that there is more space for the provisioning blob values */
+#define BOOT_TFM_SHARED_DATA_BASE (PROVISIONING_BUNDLE_VALUES_START + PROVISIONING_BUNDLE_VALUES_SIZE)
 #define BOOT_TFM_SHARED_DATA_SIZE (0x600)
 #define BOOT_TFM_SHARED_DATA_LIMIT (BOOT_TFM_SHARED_DATA_BASE + \
                                     BOOT_TFM_SHARED_DATA_SIZE - 1)
@@ -255,21 +310,27 @@
 #endif
 
 #define PROVISIONING_BUNDLE_CODE_START   (ITCM_BASE_S)
-#define PROVISIONING_BUNDLE_CODE_SIZE    (ITCM_SIZE)
-#define PROVISIONING_BUNDLE_VALUES_START (BL1_2_DATA_START)
-#define PROVISIONING_BUNDLE_VALUES_SIZE  (BL1_2_DATA_SIZE)
+#define PROVISIONING_BUNDLE_CODE_SIZE    (ITCM_SIZE - BL1_2_CODE_SIZE)
+#define PROVISIONING_BUNDLE_VALUES_START (DTCM_BASE_S)
+#define PROVISIONING_BUNDLE_VALUES_SIZE  (DTCM_SIZE - BOOT_TFM_SHARED_DATA_SIZE - BL1_1_DATA_SIZE - BL1_2_DATA_SIZE)
 #define PROVISIONING_BUNDLE_DATA_START   (VM1_BASE_S)
-#define PROVISIONING_BUNDLE_DATA_SIZE    (VM1_SIZE)
+#define PROVISIONING_BUNDLE_DATA_SIZE    (VM1_SIZE - PERSISTENT_DATA_SIZE - RSE_OTP_EMULATION_SRAM_SIZE)
+
+/* Blob chainloading requires us to limit the size of the blob
+ * to allow for loading two blobs simultaneously. It is simpler just
+ * to always limit the main blob size and it should still have
+ * plenty of space */
+#define MAIN_BUNDLE_CODE_SIZE (PROVISIONING_BUNDLE_CODE_SIZE / 2)
+
+/* Fixed address to use to store the current provisioning message in memory. This
+ * allows for both pre-loading of the provisioning message into the memory in the
+ * case where we do not use the comms HAL, and also an unused block of memory
+ * where the comms HAL can load the message to when we are */
+#define PROVISIONING_MESSAGE_START (VM0_BASE_S + OTP_DMA_ICS_SIZE)
+#define RSE_PROVISIONING_MESSAGE_MAX_SIZE (VM1_BASE_S - PROVISIONING_MESSAGE_START)
 
 #define RSE_TESTS_HEAP_SIZE      0x1000
 #define RSE_TESTS_MSP_STACK_SIZE 0x1800
-
-#if defined(RSE_BL1_TEST_BINARY) && defined(RSE_TEST_BINARY_IN_ROM)
-#define RSE_TESTS_CODE_START (ROM_BASE_S + BL1_1_CODE_SIZE)
-#define RSE_TESTS_CODE_SIZE  (ROM_SIZE - BL1_1_CODE_SIZE - ROM_DMA_ICS_SIZE)
-#define RSE_TESTS_DATA_START VM0_BASE_S
-#define RSE_TESTS_DATA_SIZE  VM0_SIZE + VM1_SIZE
-#endif /* defined(RSE_BL1_TEST_BINARY) && defined(RSE_TEST_BINARY_IN_ROM) */
 
 #ifdef PLATFORM_PSA_ADAC_SECURE_DEBUG
 #define ADAC_SERVICE_TO_BOOT_SHARED_REGION_BASE  RUNTIME_SERVICE_TO_BOOT_SHARED_REGION_BASE

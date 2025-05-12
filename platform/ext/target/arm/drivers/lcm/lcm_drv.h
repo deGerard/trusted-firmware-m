@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2022-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * SPDX-License-Identifier: Apache-2.0
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 /**
@@ -86,6 +77,9 @@ enum lcm_error_t {
     LCM_ERROR_SET_SP_ENABLED_FATAL_ERROR,
     LCM_ERROR_GET_LCS_FATAL_ERROR,
     LCM_ERROR_GET_LCS_INVALID_LCS,
+    LCM_ERROR_GET_LCS_CORRUPTION_DETECTED,
+    LCM_ERROR_GET_TP_MODE_CORRUPTION_DETECTED,
+    LCM_ERROR_GET_SP_ENABLED_CORRUPTION_DETECTED,
     LCM_ERROR_CM_TO_DM_WRITE_VERIFY_FAIL,
     LCM_ERROR_DM_TO_SE_WRITE_VERIFY_FAIL,
     LCM_ERROR_SET_LCS_INVALID_TP_MODE,
@@ -143,8 +137,10 @@ enum lcm_error_t lcm_init(struct lcm_dev_t *dev);
  *
  * \param[in]  dev     The LCM device structure.
  * \param[out] mode    The TP mode the device is currently in.
+ *
+ * \return Returns error code as specified in \ref lcm_error_t
  */
-void lcm_get_tp_mode(struct lcm_dev_t *dev, enum lcm_tp_mode_t *mode);
+enum lcm_error_t lcm_get_tp_mode(struct lcm_dev_t *dev, enum lcm_tp_mode_t *mode);
 /**
  * \brief This function sets the TP mode
  *
@@ -161,8 +157,10 @@ enum lcm_error_t lcm_set_tp_mode(struct lcm_dev_t *dev, enum lcm_tp_mode_t mode)
  * \param[in]  dev         The LCM device structure.
  * \param[out] enabled     Whether secure provisioning mode is enabled.
  *
+ * \return Returns error code as specified in \ref lcm_error_t
  */
-void lcm_get_sp_enabled(struct lcm_dev_t *dev, enum lcm_bool_t *enabled);
+enum lcm_error_t lcm_get_sp_enabled(struct lcm_dev_t *dev, enum lcm_bool_t *enabled);
+
 /**
  * \brief This function enables secure provisioning mode.
  *

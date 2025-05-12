@@ -12,6 +12,7 @@ set(RSE_XIP                             OFF        CACHE BOOL     "Whether to ru
 set(RSE_USE_HOST_UART                   ON         CACHE BOOL     "Whether RSE should setup to use the UART from the host system")
 set(RSE_USE_LOCAL_UART                  OFF        CACHE BOOL     "Whether RSE should setup to use the UART local to the RSE subsystem")
 set(RSE_HAS_EXPANSION_PERIPHERALS       OFF        CACHE BOOL     "Whether RSE has sub-platform specific peripherals in the expansion layer")
+set(RSE_HAS_DCSU                        OFF        CACHE BOOL     "Whether RSE contains a DCSU")
 
 set(RSE_DEFAULT_CLOCK_CONFIG            ON         CACHE BOOL "Use default RSE clock config implementation")
 
@@ -31,6 +32,8 @@ set(RSE_TP_MODE                         TCI        CACHE STRING "Whether system 
 set(TFM_NS_NV_COUNTER_AMOUNT            3          CACHE STRING   "How many NS NV counters are enabled")
 set(TFM_ISOLATION_LEVEL                 2          CACHE STRING   "Isolation level")
 
+set(TFM_DEBUG_OPTIMISATION              ON         CACHE BOOL      "Add basic -Og optimisation when CMAKE_BUILD_TYPE is Debug. Note that non Debug builds specify their own optimisation")
+
 ################# Partitions ###################################################
 
 set(TFM_PARTITION_CRYPTO                ON         CACHE BOOL     "Enable Crypto partition")
@@ -41,7 +44,7 @@ set(TFM_PARTITION_SCMI_COMMS            OFF        CACHE BOOL     "Enable SCMI C
 
 ################# ATTESTATION ##################################################
 
-set(TFM_ATTESTATION_SCHEME              "PSA"      CACHE STRING   "Attestation scheme to use [OFF, PSA, CCA, DPE]")
+set(TFM_ATTESTATION_SCHEME              "PSA"      CACHE STRING "Attestation scheme to use [OFF, PSA, CCA, DPE]")
 
 set(MEASURED_BOOT_HASH_ALG              SHA256     CACHE STRING "Hash algorithm used by Measured boot services")
 
@@ -88,12 +91,12 @@ set(PSA_INITIAL_ATTEST_MAX_TOKEN_SIZE   0x800      CACHE STRING    "The maximum 
 
 set(RSE_SUPPORT_ROM_LIB_RELOCATION      OFF        CACHE BOOL "Whether shared ROM code supports being copied to SRAM and then executed")
 set(RSE_USE_ROM_LIB_FROM_SRAM           OFF        CACHE BOOL "Whether shared ROM code will be used XIP from ROM or copied to SRAM and then executed")
-
-set(TFM_BL1_MEMORY_MAPPED_FLASH         ON         CACHE BOOL     "Whether BL1 can directly access flash content")
+set(RSE_USE_OTP_EMULATION_IN_SRAM       OFF        CACHE BOOL "Whether to use the OTP emulation in the SRAM instead of the OTP itself")
+set(TFM_BL1_MEMORY_MAPPED_FLASH         ON         CACHE BOOL "Whether BL1 can directly access flash content")
+set(TFM_BL1_FIH_ENABLE                  ON         CACHE BOOL "Whether BL1 enables FIH config items from bl1_fih_config.h")
 
 set(TFM_BL1_1_MEASUREMENT_HASH_ALG ${MEASURED_BOOT_HASH_ALG} CACHE STRING "Algorithm to use for measurement")
 set(TFM_BL1_2_MEASUREMENT_HASH_ALG ${MEASURED_BOOT_HASH_ALG} CACHE STRING "Algorithm to use for measurement")
-
 set(TFM_BL1_2_EMBED_ROTPK_IN_IMAGE      ON         CACHE STRING    "Whether to embed ROTPK in image and then verify against stored hash")
 set(TFM_BL1_2_ENABLE_ROTPK_POLICIES     ON         CACHE STRING    "Whether to allow individual key signing policies for BL1_2 image")
 
@@ -115,6 +118,7 @@ set(MCUBOOT_SIGNATURE_TYPE            "EC-P256"        CACHE STRING    "Algorith
 
 set(MCUBOOT_HW_KEY                    ON               CACHE BOOL      "Whether to embed the entire public key in the image metadata instead of the hash only")
 set(MCUBOOT_BUILTIN_KEY               OFF              CACHE BOOL      "Use builtin key(s) for validation, no public key data is embedded into the image metadata")
+set(CONFIG_BOOT_RAM_LOAD              ON               CACHE BOOL      "Whether to enable RAM load support")
 
 set(RSE_USE_HOST_FLASH                  ON         CACHE BOOL     "Enable RSE using the host flash.")
 set(RSE_LOAD_NS_IMAGE                   ON         CACHE BOOL     "Whether to load an RSE NSPE image")
@@ -136,45 +140,62 @@ set(RSE_PROVISIONING_DM_ENCRYPT_SECRET_VALUES  ON         CACHE BOOL "Whether DM
 set(RSE_PROVISIONING_CM_DEBUG_CLOSED           OFF        CACHE BOOL "Whether debug is open by default in CM LCS")
 set(RSE_PROVISIONING_REQUIRE_AUTHENTICATION_FOR_TCI OFF   CACHE BOOL "Whether TCI mode requires authentication to set")
 
+set(RSE_BOOT_IN_DM_LCS                         OFF        CACHE BOOL "Whether to boot as far as possible in DM state")
+if (RSE_BOOT_IN_DM_LCS)
+    set(TFM_PARTITION_RUNTIME_PROVISIONING     ON         CACHE BOOL "Whether to enable runtime secure provisioning partition")
+endif()
+
 set(RSE_CM_BLOB_VERSION                     0          CACHE STRING "Version of CM blob")
 set(RSE_DM_BLOB_VERSION                     0          CACHE STRING "Version of DM blob")
 
+# Specific BL1_1 provisioning tests configuration
+if (TEST_BL1_1)
+    set(RSE_PROVISIONING_ENABLE_AES_SIGNATURES     ON     CACHE BOOL "Allow AES signatures")
+    set(RSE_PROVISIONING_ENABLE_ECDSA_SIGNATURES   ON     CACHE BOOL "Allow ECDSA signatures")
+    set(RSE_PROVISIONING_CURVE                     P384   CACHE STRING "Curve used to validate blobs")
+    set(RSE_PROVISIONING_HASH_ALG                  SHA384 CACHE STRING "Hash algorithm used to validate blobs")
+    set(RSE_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG ${RSE_PROVISIONING_HASH_ALG} CACHE STRING "Algorithm to use for DM provisioning ROTPK comparison")
+endif()
+
 set(RSE_SYMMETRIC_PROVISIONING              ON         CACHE BOOL "Whether provisioning should be symmetric or asymmetric")
 
-set(RSE_PROVISIONING_EMBED_SIGNING_KEY      OFF        CACHE BOOL "Whether to embed the signing key (whose hash is in the CM ROTPK) in the blob")
-set(RSE_PROVISIONING_EMBED_SIGNING_KEY_CM_IDX   2      CACHE STRING "The index of the CM ROTPK hash to use when embedding the signing key")
-
 if (RSE_SYMMETRIC_PROVISIONING)
-    if (RSE_PROVISIONING_EMBED_SIGNING_KEY)
-        message(FATAL_ERROR "Only asymmetric provisioning is supported when embedding signing key in blob")
-    endif()
-    set(RSE_PROVISIONING_SIGN_ALG           AES_CCM    CACHE STRING "Algorithm used to validate blobs")
-    set(RSE_PROVISIONING_ENABLE_AES_SIGNATURES ON      CACHE BOOL "Allow AES signatures")
+    # Sign and encrypt using AES
+    set(RSE_PROVISIONING_SIGN_ALG                   AES_CCM    CACHE STRING "Algorithm used to validate blobs")
+    set(RSE_PROVISIONING_ENABLE_AES_SIGNATURES      ON      CACHE BOOL "Allow AES signatures")
+    set(RSE_PROVISIONING_ENABLE_ECDSA_SIGNATURES    OFF    CACHE BOOL "Allow ECDSA signatures")
+
+    set(RSE_PROVISIONING_CM_SIGNATURE_CONFIG        KRTL_DERIVATIVE     CACHE STRING "Signature configuration to use to validate CM blob signature [KRTL_DERIVATE, ROTPK_IN_ROM]")
+    set(RSE_PROVISIONING_DM_SIGNATURE_CONFIG        KRTL_DERIVATIVE     CACHE STRING "Signature configuration to use to validate DM blob signature [KRTL_DERIVATE, ROTPK_IN_ROM, ROTPK_NOT_IN_ROM]")
 else()
-    set(RSE_PROVISIONING_SIGN_ALG           ECDSA      CACHE STRING "Algorithm used to validate blobs")
-    set(RSE_PROVISIONING_ENABLE_ECDSA_SIGNATURES ON    CACHE BOOL "Allow ECDSA signatures")
-endif()
+    set(RSE_PROVISIONING_SIGN_ALG                   ECDSA      CACHE STRING "Algorithm used to validate blobs")
+    set(RSE_PROVISIONING_ENCRYPTION_ALG             AES_CTR    CACHE STRING "Algorithm used to encrypt blobs")
+    set(RSE_PROVISIONING_ENABLE_AES_SIGNATURES      OFF      CACHE BOOL "Allow AES signatures")
+    set(RSE_PROVISIONING_ENABLE_ECDSA_SIGNATURES    ON    CACHE BOOL "Allow ECDSA signatures")
 
-if (RSE_PROVISIONING_SIGN_ALG STREQUAL ECDSA)
-    set(RSE_PROVISIONING_CURVE              P256       CACHE STRING "Curve used to validate blobs")
+    set(RSE_PROVISIONING_CURVE                      P256       CACHE STRING "Curve used to validate blobs [P256, P384]")
+    # Use same number of bits for SHA and curve
+    string(REGEX MATCH "P([0-9]+)" _match "${RSE_PROVISIONING_CURVE}")
+    set(RSE_PROVISIONING_HASH_ALG                   SHA${CMAKE_MATCH_1}     CACHE STRING "Hash algorithm used to validate blobs [SHA256, SHA384]")
 
-    if (RSE_PROVISIONING_CURVE STREQUAL P384)
-        set(RSE_PROVISIONING_HASH_ALG           SHA384     CACHE STRING "Hash algorithm used to validate blobs")
-    else()
-        set(RSE_PROVISIONING_HASH_ALG           SHA256     CACHE STRING "Hash algorithm used to validate blobs")
-    endif()
-
+    # Specify the key to use for signing
     if (RSE_TP_MODE STREQUAL TCI OR TFM_DUMMY_PROVISIONING)
-        set(RSE_CM_PROVISIONING_SIGNING_KEY "${CMAKE_SOURCE_DIR}/bl2/ext/mcuboot/root-EC-${RSE_PROVISIONING_CURVE}.pem" CACHE FILEPATH "Path to provisioning root key")
+        set(RSE_CM_PROVISIONING_SIGNING_KEY         "${CMAKE_SOURCE_DIR}/bl2/ext/mcuboot/root-EC-${RSE_PROVISIONING_CURVE}.pem" CACHE FILEPATH "Path to provisioning root key")
+    endif()
+
+    set(RSE_DM_CHAINED_PROVISIONING                 OFF   CACHE BOOL "Whether to use DM bundle chained provisioning flow")
+
+    set(RSE_PROVISIONING_CM_SIGNATURE_CONFIG        ROTPK_IN_ROM     CACHE STRING "Signature configuration to use to validate CM blob signature [KRTL_DERIVATE, ROTPK_IN_ROM]")
+    set(RSE_PROVISIONING_DM_SIGNATURE_CONFIG        ROTPK_IN_ROM     CACHE STRING "Signature configuration to use to validate DM blob signature [KRTL_DERIVATE, ROTPK_IN_ROM, ROTPK_NOT_IN_ROM]")
+
+    if (${RSE_PROVISIONING_DM_SIGNATURE_CONFIG} STREQUAL ROTPK_NOT_IN_ROM)
+        # For asymmetric provisioning with ROTPK_NOT_IN_ROM, specify the index of the CM ROTPK to use.
+        # This will be used to write the RSE_CM_PROVISIONING_SIGNING_KEY to the CM ROTPK in the OTP
+        set(RSE_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_IDX           2       CACHE STRING "In the case of using the CM_ROTPK, the index of the key to use")
+        # Use same ROTPK hash algorithm as provisioning hash algorithm by default
+        set(RSE_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG      ${RSE_PROVISIONING_HASH_ALG}    CACHE STRING "Algorithm to use for DM provisioning ROTPK comparison")
     endif()
 endif()
-
-if (NOT RSE_SYMMETRIC_PROVISIONING)
-    set(RSE_PROVISIONING_ENCRYPTION_ALG     AES_CTR    CACHE STRING "Algorithm used to validate blobs")
-endif()
-
-set(RSE_PROVISIONING_ENABLE_AES_SIGNATURES     OFF     CACHE BOOL "Allow AES signatures")
-set(RSE_PROVISIONING_ENABLE_ECDSA_SIGNATURES   OFF     CACHE BOOL "Allow ECDSA signatures")
 
 ################# Generic TFM platform (Do not change) #########################
 
@@ -207,7 +228,6 @@ set(PLATFORM_ERROR_CODES                ON         CACHE BOOL     "Whether to us
 set(BL1                                 ON         CACHE BOOL     "Whether to build BL1")
 set(PLATFORM_DEFAULT_BL1                ON         CACHE STRING   "Whether to use default BL1 or platform-specific one")
 set(TFM_BL1_SOFTWARE_CRYPTO             OFF        CACHE BOOL     "Whether BL1_1 will use software crypto")
-set(TFM_BL1_DUMMY_TRNG                  OFF        CACHE BOOL     "Whether BL1_1 will use dummy TRNG")
 
 set(BL2                                 ON         CACHE BOOL     "Whether to build BL2")
 set(MCUBOOT_UPGRADE_STRATEGY            "RAM_LOAD" CACHE STRING   "Upgrade strategy when multiple boot images are loaded [OVERWRITE_ONLY, SWAP, DIRECT_XIP, RAM_LOAD]")
@@ -217,11 +237,9 @@ set(MCUBOOT_NS_IMAGE_FLASH_AREA_NUM     3          CACHE STRING   "ID of the fla
 
 set(TFM_MBEDCRYPTO_PLATFORM_EXTRA_CONFIG_PATH ${CMAKE_CURRENT_LIST_DIR}/mbedtls_extra_config.h CACHE PATH "Config to append to standard Mbed Crypto config, used by platforms to configure feature support")
 
-set(TFM_EXTRAS_REPO_PATH                "DOWNLOAD"  CACHE PATH    "Path to tf-m-extras repo (or DOWNLOAD to fetch automatically")
-set(TFM_EXTRAS_REPO_VERSION             "52a5ded"   CACHE STRING  "The version of tf-m-extras to use")
-set(TFM_EXTRAS_REPO_EXTRA_PARTITIONS    "measured_boot;delegated_attestation;dice_protection_environment;scmi;adac" CACHE STRING "List of extra secure partition directory name(s)")
+set(TFM_EXTRAS_REPO_EXTRA_PARTITIONS    "measured_boot;delegated_attestation;dice_protection_environment;scmi;adac;runtime_provisioning" CACHE STRING "List of extra secure partition directory name(s)")
 # Below TFM_EXTRAS_REPO_EXTRA_MANIFEST_LIST path is relative to tf-m-extras repo
-set(TFM_EXTRAS_REPO_EXTRA_MANIFEST_LIST "partitions/measured_boot/measured_boot_manifest_list.yaml;partitions/delegated_attestation/delegated_attestation_manifest_list.yaml;partitions/dice_protection_environment/dpe_manifest_list.yaml;partitions/adac/adac_manifest_list.yaml;" CACHE STRING "List of extra secure partition manifests")
+set(TFM_EXTRAS_REPO_EXTRA_MANIFEST_LIST "partitions/measured_boot/measured_boot_manifest_list.yaml;partitions/delegated_attestation/delegated_attestation_manifest_list.yaml;partitions/dice_protection_environment/dpe_manifest_list.yaml;partitions/adac/adac_manifest_list.yaml;partitions/runtime_provisioning/runtime_provisioning_manifest_list.yaml" CACHE STRING "List of extra secure partition manifests")
 
 set(TFM_PLAT_SPECIFIC_MULTI_CORE_COMM   ON         CACHE BOOL     "Whether to use a platform specific inter-core communication instead of mailbox in dual-cpu topology")
 

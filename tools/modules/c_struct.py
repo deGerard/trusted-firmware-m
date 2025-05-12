@@ -12,7 +12,7 @@ from collections import Counter
 import os
 
 import logging
-logger = logging.getLogger("TF-M")
+logger = logging.getLogger("TF-M.{}".format(__name__))
 
 from rich import inspect
 
@@ -69,6 +69,10 @@ def _c_struct_or_union_get_value_str(self, struct_or_union):
     for f in self._fields:
         if f.to_bytes() != bytes(f.get_size()):
             fields_string += _pad_lines(".{} = {},".format(f.name, f.get_value_str()), pad)
+            fields_string += "\n"
+    fields_string = fields_string[:-1]
+    if not fields_string:
+        return "{}"
     string += fields_string
     string += "\n}"
     return string
@@ -339,11 +343,17 @@ class C_array:
         if self.to_bytes() != bytes(self.get_size()):
             string += "{\n"
             m_string = ""
-            for m in self._members:
-                m_string += m.get_value_str() + ", "
+            for idx,m in enumerate(self._members):
+                tmp = m.get_value_str() + ", "
+                m_string += tmp
+                if m_string[-3:] == "}, " or idx % 8 == 7:
+                    m_string = m_string[:-1] + "\n"
+            m_string = m_string[:-1]
             string += _pad_lines(m_string, pad)
             string += "\n}"
-        return string
+            return string
+        else:
+            return "{}"
 
     def __str__(self):
         string = "{} {}".format(self.c_type, self.name)
@@ -406,6 +416,8 @@ class C_variable:
         return [self.name]
 
     def get_field(self, field_path):
+        if field_path != self.name:
+            raise KeyError
         return self
 
     def to_bytes(self):
@@ -415,7 +427,8 @@ class C_variable:
         return self._size
 
     def get_value_str(self):
-        return hex(self.value)
+        value = self.value or 0
+        return f"0x{value:02x}"
 
     def __str__(self):
         string = "{} {}".format(self.c_type, self.name)
@@ -453,7 +466,7 @@ class C_union:
         assert(len(new_binaries) < 2)
 
         if new_binaries:
-            self._actual_value = list(new_binaries)[0]
+            self._actual_value = new_binaries[0] + self._actual_value[len(new_binaries[0]):]
 
         for f in self._fields:
             f.set_value_from_bytes(self._actual_value[:f._size])
@@ -641,7 +654,8 @@ if __name__ == '__main__':
     parser.add_argument("--c_file_to_mirror_includes_from", help="name of the c file to take", required=True)
     parser.add_argument("--log_level", help="log level", required=False, default="ERROR", choices=logging._levelToName.values())
     args = parser.parse_args()
-    logger.setLevel(args.log_level)
+    logging.getLogger("TF-M").setLevel(args.log_level)
+    logger.addHandler(logging.StreamHandler())
 
     includes = c_include.get_includes(args.compile_commands_file, args.c_file_to_mirror_includes_from)
     defines = c_include.get_defines(args.compile_commands_file, args.c_file_to_mirror_includes_from)

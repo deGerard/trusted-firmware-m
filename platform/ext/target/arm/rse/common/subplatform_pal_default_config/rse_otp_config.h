@@ -9,8 +9,12 @@
 #define __RSE_OTP_CONFIG_H__
 
 #include "rse_nv_counter_config.h"
+#include "rse_rotpk_policy.h"
 
 #include <stdint.h>
+
+#define RSE_OTP_CONFIG_MAX_SIZE_OF_THREE(_a, _b, _c) \
+    ((_a) > (_b) ? ((_a) > (_c) ? (_a) : (_c)) : ((_b) > (_c) ? (_b) : (_c)))
 
 #define RSE_OTP_SIZE 16384
 
@@ -28,7 +32,7 @@
 
 /* #define RSE_OTP_DM_SETS_DM_AND_DYNAMIC_AREA_SIZE */
 
-#define RSE_OTP_KRTL_COUNTER_MAX_VALUE 16
+#define RSE_OTP_KRTL_COUNTER_MAX_VALUE 64
 #define RSE_OTP_LFT_COUNTER_MAX_VALUE 512
 
 #define RSE_OTP_DMA_ICS_SIZE 0x108
@@ -40,10 +44,26 @@
 /* #define RSE_OTP_HAS_RSE_ID */
 /* #define RSE_OTP_HAS_ROUTING_TABLES */
 
-#define RSE_OTP_CM_ROTPK_SIZE 32
+/* CM ROTPK size must be largest of BL1_2 hash alg size, MCUBoot hash alg size
+ * and (if present) DM sign key hash alg size */
+#define RSE_OTP_CONFIG_TFM_BL1_2_ROTPK_HASH_ALG_SIZE \
+    RSE_ROTPK_SIZE_FROM_ALG(TFM_BL1_2_ROTPK_HASH_ALG)
+#define RSE_OTP_CONFIG_MCUBOOT_ROTPK_HASH_ALG_SIZE RSE_ROTPK_SIZE_FROM_ALG(MCUBOOT_ROTPK_HASH_ALG)
+#ifdef RSE_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG
+#define RSE_OTP_CONFIG_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG_SIZE \
+    RSE_ROTPK_SIZE_FROM_ALG(RSE_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG)
+#else
+#define RSE_OTP_CONFIG_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG_SIZE (0)
+#endif /* RSE_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG */
+
+#define RSE_OTP_CM_ROTPK_SIZE                                                                     \
+    (RSE_OTP_CONFIG_MAX_SIZE_OF_THREE(                                                            \
+        RSE_OTP_CONFIG_TFM_BL1_2_ROTPK_HASH_ALG_SIZE, RSE_OTP_CONFIG_MCUBOOT_ROTPK_HASH_ALG_SIZE, \
+        RSE_OTP_CONFIG_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG_SIZE))
+
 #define RSE_OTP_CM_ROTPK_AMOUNT 4
 #define RSE_OTP_CM_ROTPK_IS_HASH_NOT_KEY
-#define RSE_OTP_CM_ROTPK_MAX_REVOCATIONS 0
+#define RSE_OTP_CM_ROTPK_MAX_REVOCATIONS 3
 #define RSE_ROUTING_TABLES_SIZE 0
 #define RSE_OTP_CM_RESERVED_SIZE 4
 
@@ -57,10 +77,13 @@
 /* The following options control the DM area, and can be changed without
  * altering the ROM.
  */
-#define RSE_OTP_DM_ROTPK_SIZE 32
+
+/* DM ROTPK size must be equal to the MCUBoot hash alg size */
+#define RSE_OTP_DM_ROTPK_SIZE RSE_OTP_CONFIG_MCUBOOT_ROTPK_HASH_ALG_SIZE
+
 #define RSE_OTP_DM_ROTPK_AMOUNT 3
 #define RSE_OTP_DM_ROTPK_IS_HASH_NOT_KEY
-#define RSE_OTP_DM_ROTPK_MAX_REVOCATIONS 0
+#define RSE_OTP_DM_ROTPK_MAX_REVOCATIONS 7
 #define RSE_OTP_DM_RESERVED_SIZE 0
 
 /* The following options control the Dynamic area, and can be changed without

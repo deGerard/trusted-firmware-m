@@ -20,7 +20,7 @@ import sign_then_encrypt_data
 import argparse
 
 import logging
-logger = logging.getLogger("TF-M")
+logger = logging.getLogger("TF-M.{}".format(__name__))
 
 def add_arguments(parser : argparse.ArgumentParser,
                   prefix : str = "",
@@ -63,15 +63,30 @@ def add_arguments(parser : argparse.ArgumentParser,
 
         arg_utils.add_prefixed_argument(parser, "sign_key_cm_rotpk", prefix,
                                                 help="CM ROTPK to use when embedding key in bundle",
-                                                type=int, required=False)
+                                                type=int, required=False, default=0)
 
-        arg_utils.add_prefixed_argument(parser, "soc_id", prefix,
+        arg_utils.add_prefixed_argument(parser, "soc_uid", prefix,
                                                 help="ID of SOC to use for personalization",
                                                 type=arg_utils.arg_type_bytes, required=False)
 
         arg_utils.add_prefixed_argument(parser, "version", prefix,
                                                 help="Version of provisioning blob",
                                                 type=int, required=required)
+
+        arg_utils.add_prefixed_enum_argument(parser=parser,
+                                             enum=provisioning_message_config.enums['rse_provisioning_blob_signature_config_t'],
+                                             prefix=prefix,
+                                             arg_name="signature_config",
+                                             help="Configuration of the blob signature",
+                                             required=required)
+
+        arg_utils.add_prefixed_enum_argument(parser=parser,
+                                             enum=provisioning_message_config.enums['rse_provisioning_blob_non_rom_pk_type_config_t'],
+                                             prefix=prefix,
+                                             arg_name="non_rom_pk_config",
+                                             help="Configuration of the blob signature when the PK is not in the ROM",
+                                             default="RSE_PROVISIONING_BLOB_DETAILS_NON_ROM_PK_TYPE_CM_ROTPK",
+                                             required=False)
 
         arg_utils.add_prefixed_enum_argument(parser=parser,
                                              enum=provisioning_message_config.enums['rse_provisioning_blob_code_and_data_decryption_config_t'],
@@ -103,7 +118,8 @@ def parse_args(args : argparse.Namespace,
         out = arg_utils.parse_args_automatically(args, ["provisioning_message_config"], prefix)
 
     out |= arg_utils.parse_args_automatically(args, ["valid_lcs", "tp_mode", "sp_mode",
-                                                     "sign_key_cm_rotpk", "soc_id", "version",
+                                                     "signature_config", "non_rom_pk_config",
+                                                     "sign_key_cm_rotpk", "soc_uid", "version",
                                                      "encrypt_code_and_data",
                                                      "encrypt_secret_values"], prefix)
 
@@ -142,6 +158,7 @@ class Provisioning_message_config:
             'rse_provisioning_blob_non_rom_pk_type_config_t',
             'rse_provisioning_blob_signature_config_t',
             'rse_provisioning_blob_personalization_config_t',
+            'rse_provisioning_blob_sequencing_config_t',
         ]
 
         enums = {x : create_enum(x) for x in enum_names}
@@ -160,52 +177,42 @@ class Provisioning_message_config:
             pickle.dump(self, f)
 
 def get_blob_details(provisioning_message_config : Provisioning_message_config,
-                     encrypt_code_and_data : bool,
-                     encrypt_secret_values : bool,
+                     encrypt_code_and_data : C_enum,
+                     encrypt_secret_values : C_enum,
+                     signature_config : C_enum,
+                     non_rom_pk_config : C_enum,
                      sign_key_cm_rotpk : int,
                      encrypt_alg : str = None,
                      sign_alg : str = None,
                      sign_and_encrypt_alg : str = None,
-                     soc_id : bytes = None,
+                     soc_uid : bytes = None,
                      valid_lcs : [str] = None,
                      **kwargs
                      ) -> int:
     details_val = 0
 
-    if encrypt_code_and_data:
-        val = provisioning_message_config.RSE_PROVISIONING_BLOB_CODE_DATA_DECRYPTION_AES.get_value()
-    else:
-        val = provisioning_message_config.RSE_PROVISIONING_BLOB_CODE_DATA_DECRYPTION_NONE.get_value()
+    val = encrypt_code_and_data.get_value()
     details_val |= (val & int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_CODE_DATA_DECRYPTION_MASK, 0)) \
                    << int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_CODE_DATA_DECRYPTION_OFFSET, 0)
 
-    if encrypt_secret_values:
-        val = provisioning_message_config.RSE_PROVISIONING_BLOB_SECRET_VALUES_DECRYPTION_AES.get_value()
-    else:
-        val = provisioning_message_config.RSE_PROVISIONING_BLOB_SECRET_VALUES_DECRYPTION_BY_BLOB.get_value()
+    val = encrypt_secret_values.get_value()
     details_val |= (val & int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_SECRET_VALUES_DECRYPTION_MASK, 0)) \
                    << int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_SECRET_VALUES_DECRYPTION_OFFSET, 0)
 
-    if sign_key_cm_rotpk is not None:
-        val = provisioning_message_config.RSE_PROVISIONING_BLOB_SIGNATURE_ROTPK_NOT_IN_ROM.get_value()
-    elif sign_and_encrypt_alg and sign_and_encrypt_alg == "AES_CCM":
-        val = provisioning_message_config.RSE_PROVISIONING_BLOB_SIGNATURE_KRTL_DERIVATIVE.get_value()
-    elif sign_alg and sign_alg == "ECDSA":
-        val = provisioning_message_config.RSE_PROVISIONING_BLOB_SIGNATURE_ROTPK_IN_ROM.get_value()
-    else:
-        assert False, "Signature algorithm cannot be represented by blob header"
+    val = signature_config.get_value()
     details_val |= (val & int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_SIGNATURE_MASK, 0)) \
                    << int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_SIGNATURE_OFFSET, 0)
 
-    if sign_key_cm_rotpk is not None:
-        details_val |= (provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_NON_ROM_PK_TYPE_CM_ROTPK.get_value() \
-                        & int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_NON_ROM_PK_TYPE_MASK, 0)) \
+    if signature_config.name == "RSE_PROVISIONING_BLOB_SIGNATURE_ROTPK_NOT_IN_ROM":
+        val = non_rom_pk_config.get_value()
+        details_val |= (val & int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_NON_ROM_PK_TYPE_MASK, 0)) \
                         << int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_NON_ROM_PK_TYPE_OFFSET, 0)
-        details_val |= (sign_key_cm_rotpk \
-                        & int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_CM_ROTPK_NUMBER_MASK, 0)) \
-                        << int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_CM_ROTPK_NUMBER_OFFSET, 0)
+        if non_rom_pk_config.name == "RSE_PROVISIONING_BLOB_DETAILS_NON_ROM_PK_TYPE_CM_ROTPK":
+            details_val |= (sign_key_cm_rotpk \
+                            & int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_CM_ROTPK_NUMBER_MASK, 0)) \
+                            << int(provisioning_message_config.RSE_PROVISIONING_BLOB_DETAILS_CM_ROTPK_NUMBER_OFFSET, 0)
 
-    if soc_id:
+    if soc_uid:
         val = provisioning_message_config.RSE_PROVISIONING_BLOB_TYPE_PERSONALIZED.get_value()
     else:
         val = provisioning_message_config.RSE_PROVISIONING_BLOB_TYPE_STATIC.get_value()
@@ -219,6 +226,8 @@ def get_blob_purpose(provisioning_message_config : Provisioning_message_config,
                      tp_mode : C_enum,
                      sp_mode : C_enum,
                      valid_lcs : [C_enum],
+                     signature_config : C_enum,
+                     non_rom_pk_config : C_enum,
                      **kwargs,
                      ):
     purpose_val = 0;
@@ -239,6 +248,12 @@ def get_blob_purpose(provisioning_message_config : Provisioning_message_config,
         val = l.get_value()
         purpose_val |= (val & int(provisioning_message_config.RSE_PROVISIONING_BLOB_PURPOSE_LCS_MASK_MASK, 0)) \
                         << int(provisioning_message_config.RSE_PROVISIONING_BLOB_PURPOSE_LCS_MASK_OFFSET, 0)
+
+    if signature_config.name == "RSE_PROVISIONING_BLOB_SIGNATURE_ROTPK_NOT_IN_ROM" and \
+        non_rom_pk_config.name == "RSE_PROVISIONING_BLOB_DETAILS_NON_ROM_PK_TYPE_PREVIOUS_BLOB":
+        purpose_val |= (provisioning_message_config.RSE_PROVISIONING_BLOB_CHAINED.get_value() \
+                        & int(provisioning_message_config.RSE_PROVISIONING_BLOB_PURPOSE_SEQUENCING_MASK, 0)) \
+                        << int(provisioning_message_config.RSE_PROVISIONING_BLOB_PURPOSE_SEQUENCING_OFFSET, 0)
 
     return purpose_val
 
@@ -267,20 +282,24 @@ def get_blob_pubkey(sign_alg : str = None,
 
 def get_data_to_encrypt_and_sign(provisioning_message_config : Provisioning_message_config,
                                  code : bytes,
-                                 encrypt_code_and_data : bool,
-                                 encrypt_secret_values : bool,
+                                 encrypt_code_and_data : C_enum,
+                                 encrypt_secret_values : C_enum,
                                  version : int,
+                                 signature_config : C_enum,
+                                 non_rom_pk_config : C_enum,
                                  sign_key_cm_rotpk : int,
                                  sign_and_encrypt_kwargs : dict,
                                  data : bytes = bytes(0),
                                  secret_values = bytes(0),
-                                 soc_id : bytes = None,
+                                 soc_uid : bytes = None,
                                  **kwargs : dict,
                         ):
     message = provisioning_message_config.message
     message.header.type.set_value(provisioning_message_config.RSE_PROVISIONING_MESSAGE_TYPE_BLOB.get_value())
 
-    assert not (encrypt_code_and_data and not encrypt_secret_values)
+    # Cannot enable code and data encryption without secret values encryption
+    assert not ((encrypt_code_and_data.name ==  "RSE_PROVISIONING_BLOB_CODE_DATA_DECRYPTION_AES") \
+                and (encrypt_secret_values.name != "RSE_PROVISIONING_BLOB_SECRET_VALUES_DECRYPTION_AES"))
 
     if len(code) % 16 != 0:
         code += bytes(16 - (len(code) % 16))
@@ -310,31 +329,35 @@ def get_data_to_encrypt_and_sign(provisioning_message_config : Provisioning_mess
 
     if version:
         message.blob.version.set_value(version)
-    if soc_id:
-        message.blob.soc_id.set_value_from_bytes(soc_id)
+    if soc_uid:
+        message.blob.soc_uid.set_value_from_bytes(soc_uid)
 
     metadata = get_blob_details(provisioning_message_config=provisioning_message_config,
                                 encrypt_code_and_data=encrypt_code_and_data,
                                 encrypt_secret_values=encrypt_secret_values,
+                                signature_config=signature_config,
+                                non_rom_pk_config=non_rom_pk_config,
                                 sign_key_cm_rotpk=sign_key_cm_rotpk,
-                                soc_id=soc_id, **sign_and_encrypt_kwargs)
+                                soc_uid=soc_uid, **sign_and_encrypt_kwargs)
     message.blob.metadata.set_value(metadata)
 
-    purpose = get_blob_purpose(provisioning_message_config=provisioning_message_config, **kwargs)
+    purpose = get_blob_purpose(provisioning_message_config=provisioning_message_config, signature_config=signature_config,
+                                non_rom_pk_config=non_rom_pk_config, **kwargs)
     message.blob.purpose.set_value(purpose)
 
-    if sign_key_cm_rotpk is not None:
+    if signature_config.name == "RSE_PROVISIONING_BLOB_SIGNATURE_ROTPK_NOT_IN_ROM" and \
+        non_rom_pk_config.name == "RSE_PROVISIONING_BLOB_DETAILS_NON_ROM_PK_TYPE_CM_ROTPK":
         message.blob.public_key.set_value_from_bytes(get_blob_pubkey(**sign_and_encrypt_kwargs))
 
     plaintext = bytes(0)
     aad = get_header(provisioning_message_config)
 
-    if encrypt_code_and_data:
+    if encrypt_code_and_data.name == "RSE_PROVISIONING_BLOB_CODE_DATA_DECRYPTION_AES":
         plaintext += code_and_data
     else:
         aad += code_and_data
 
-    if encrypt_secret_values:
+    if encrypt_secret_values.name == "RSE_PROVISIONING_BLOB_SECRET_VALUES_DECRYPTION_AES":
         plaintext += secret_values
     else:
         aad += secret_values
@@ -342,7 +365,9 @@ def get_data_to_encrypt_and_sign(provisioning_message_config : Provisioning_mess
 
 def create_blob_message(provisioning_message_config : Provisioning_message_config,
                         sign_and_encrypt_kwargs : dict,
-                        soc_id : bytes = None,
+                        signature_config : C_enum,
+                        non_rom_pk_config : C_enum,
+                        soc_uid : bytes = None,
                         sign_key_cm_rotpk : bytes = None,
                         **kwargs : dict,
                         ):
@@ -354,8 +379,9 @@ def create_blob_message(provisioning_message_config : Provisioning_message_confi
 
     plaintext, aad = get_data_to_encrypt_and_sign(provisioning_message_config,
                                                   sign_and_encrypt_kwargs=sign_and_encrypt_kwargs,
+                                                  signature_config=signature_config, non_rom_pk_config=non_rom_pk_config,
                                                   sign_key_cm_rotpk=sign_key_cm_rotpk,
-                                                  soc_id=soc_id,
+                                                  soc_uid=soc_uid,
                                                   **kwargs)
 
     _, ciphertext, signature = sign_then_encrypt_data.sign_then_encrypt_data(**sign_and_encrypt_kwargs,
@@ -402,7 +428,8 @@ if __name__ == "__main__":
     parser.add_argument("--log_level", help="log level", required=False, default="ERROR", choices=logging._levelToName.values())
 
     args = parser.parse_args()
-    logger.setLevel(args.log_level)
+    logging.getLogger("TF-M").setLevel(args.log_level)
+    logger.addHandler(logging.StreamHandler())
 
     includes = c_include.get_includes(args.compile_commands_file, "otp_lcm.c")
     defines = c_include.get_defines(args.compile_commands_file, "otp_lcm.c")

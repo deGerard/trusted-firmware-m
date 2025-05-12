@@ -188,16 +188,6 @@ wrap_up:
     return status;
 }
 
-static psa_status_t builtin_key_copy_to_buffer(
-        struct tfm_builtin_key_t *key_slot, uint8_t *key_buffer,
-        size_t key_buffer_size, size_t *key_buffer_length)
-{
-    memcpy(key_buffer, key_slot->key, key_slot->key_len);
-    *key_buffer_length = key_slot->key_len;
-
-    return PSA_SUCCESS;
-}
-
 /*!
  * \defgroup tfm_builtin_key_loader
  *
@@ -229,8 +219,7 @@ psa_status_t tfm_builtin_key_loader_init(void)
             desc_table[key].loader_key_ctx, &buf[0], TFM_BUILTIN_MAX_KEY_LEN, &key_len, &key_bits, &algorithm, &type);
 
         if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-            err = PSA_ERROR_HARDWARE_FAILURE;
-            goto wrap_up;
+            continue;
         }
 
         /* Build the attributes with the metadata retrieved from the platform and desc table */
@@ -249,7 +238,6 @@ psa_status_t tfm_builtin_key_loader_init(void)
     /* At this point the discovered keys have been loaded successfully into the driver */
     err = PSA_SUCCESS;
 
-wrap_up:
     return err;
 }
 
@@ -342,8 +330,8 @@ psa_status_t tfm_builtin_key_loader_get_builtin_key(
                                         key_buffer, key_buffer_size,
                                         key_buffer_length);
     } else {
-        err = builtin_key_copy_to_buffer(key_slot, key_buffer, key_buffer_size,
-                                         key_buffer_length);
+        memcpy(key_buffer, key_slot->key, key_slot->key_len);
+        *key_buffer_length = key_slot->key_len;
     }
 
 wrap_up:

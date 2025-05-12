@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  * Copyright (c) 2021-2024 Cypress Semiconductor Corporation (an Infineon company)
  * or an affiliate of Cypress Semiconductor Corporation. All rights reserved.
  *
@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <assert.h>
 
 #include "cmsis_compiler.h"
 
@@ -18,7 +19,6 @@
 #include "internal_status_code.h"
 #include "psa/error.h"
 #include "utilities.h"
-#include "private/assert.h"
 #include "tfm_arch.h"
 #include "thread.h"
 #include "tfm_psa_call_pack.h"
@@ -268,7 +268,7 @@ static int32_t tfm_mailbox_dispatch(const struct mailbox_msg_t *msg_ptr,
     bool sync = true;
 #endif
 
-    SPM_ASSERT(params != NULL);
+    assert(params != NULL);
 
     switch (msg_ptr->call_type) {
     case MAILBOX_PSA_FRAMEWORK_VERSION:
@@ -360,8 +360,10 @@ int32_t tfm_mailbox_handle_msg(void)
     struct mailbox_status_t *ns_status = spe_mailbox_queue.ns_status;
     struct mailbox_msg_t *msg_ptr;
     uint32_t critical_section;
+    int32_t status;
+    int32_t msg_dispatched = 0;
 
-    SPM_ASSERT(ns_status != NULL);
+    assert(ns_status != NULL);
 
     critical_section = tfm_mailbox_hal_enter_critical();
 
@@ -403,7 +405,10 @@ int32_t tfm_mailbox_handle_msg(void)
         get_spe_mailbox_msg_handle(idx,
                                    &spe_mailbox_queue.queue[idx].msg_handle);
 
-        if (tfm_mailbox_dispatch(msg_ptr, idx, &reply_slots) != MAILBOX_SUCCESS) {
+        status = tfm_mailbox_dispatch(msg_ptr, idx, &reply_slots);
+        if (status == MAILBOX_SUCCESS) {
+            msg_dispatched++;
+        } else {
             mailbox_clean_queue_slot(idx);
             continue;
         }
@@ -423,7 +428,7 @@ int32_t tfm_mailbox_handle_msg(void)
         tfm_mailbox_hal_notify_peer();
     }
 
-    return MAILBOX_SUCCESS;
+    return (int32_t)msg_dispatched;
 }
 
 int32_t tfm_mailbox_reply_msg(mailbox_msg_handle_t handle, int32_t reply)
@@ -433,7 +438,7 @@ int32_t tfm_mailbox_reply_msg(mailbox_msg_handle_t handle, int32_t reply)
     uint32_t critical_section;
     struct mailbox_status_t *ns_status = spe_mailbox_queue.ns_status;
 
-    SPM_ASSERT(ns_status != NULL);
+    assert(ns_status != NULL);
 
     /*
      * If handle == MAILBOX_MSG_NULL_HANDLE, reply to the mailbox message
@@ -487,10 +492,25 @@ static void mailbox_reply(const void *owner, int32_t ret)
     (void)tfm_mailbox_reply_msg(handle, ret);
 }
 
+/* Process new mailbox message callback */
+static int32_t mailbox_process_new_msg(uint32_t *nr_msg)
+{
+    int32_t status;
+
+    status = tfm_mailbox_handle_msg();
+    if (status < 0) {
+        return status;
+    } else {
+        *nr_msg = (uint32_t)status;
+        return MAILBOX_SUCCESS;
+    }
+}
+
 /* Mailbox specific operations callback for TF-M RPC */
 static const struct tfm_rpc_ops_t mailbox_rpc_ops = {
     .handle_req = mailbox_handle_req,
     .reply      = mailbox_reply,
+    .process_new_msg = mailbox_process_new_msg,
 };
 
 static int32_t tfm_mailbox_init(void)

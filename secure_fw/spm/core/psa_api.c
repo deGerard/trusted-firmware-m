@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  * Copyright (c) 2022-2024 Cypress Semiconductor Corporation (an Infineon
  * company) or an affiliate of Cypress Semiconductor Corporation. All rights
  * reserved.
@@ -206,7 +206,7 @@ static void update_caller_outvec_len(struct connection_t *handle)
             continue;
         }
 
-        SPM_ASSERT(handle->caller_outvec[i].base == handle->outvec_base[i]);
+        assert(handle->caller_outvec[i].base == handle->outvec_base[i]);
 
         handle->caller_outvec[i].len = handle->outvec_written[i];
     }
@@ -273,8 +273,13 @@ psa_status_t tfm_spm_partition_psa_reply(psa_handle_t msg_handle,
         }
         break;
     case PSA_IPC_DISCONNECT:
+#if CONFIG_TFM_SPM_BACKEND_IPC == 1
+        /* Service handle will be freed in the backend */
+        handle->status = TFM_HANDLE_STATUS_TO_FREE;
+#else
         /* Service handle is not used anymore */
         delete_connection = true;
+#endif
 
         /*
          * If the message type is PSA_IPC_DISCONNECT, then the status code is

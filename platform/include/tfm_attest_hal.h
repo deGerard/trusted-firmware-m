@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -72,7 +72,7 @@ enum tfm_security_lifecycle_t tfm_attest_hal_get_security_lifecycle(void);
  * It can be a text string that can be used to locate the service or can be a
  * URL specifying the address of the service.
  *
- * \param[in/out] size  As an input value it indicates the size of the caller
+ * \param[in,out] size  As an input value it indicates the size of the caller
  *                      allocated buffer (in bytes) to store the verification
  *                      service indicator. At return its value is updated with
  *                      the exact size of the verification service URL.
@@ -92,7 +92,7 @@ tfm_attest_hal_get_verification_service(uint32_t *size, uint8_t *buf);
  *  being a full description of the claims, their usage, verification and
  *  token signing.
  *
- * \param[in/out] size  As an input value it indicates the size of the caller
+ * \param[in,out] size  As an input value it indicates the size of the caller
  *                      allocated buffer (in bytes) to store the profile
  *                      definition. At return its value is updated with the
  *                      exact size of the profile definition.
@@ -110,7 +110,7 @@ tfm_attest_hal_get_profile_definition(uint32_t *size, uint8_t *buf);
  * resource like fuses or on-chip flash that stores CCA platform immutable
  * boot parameters.
  *
- * \param[in/out] size  As an input value it indicates the size of the caller
+ * \param[in,out] size  As an input value it indicates the size of the caller
  *                      allocated buffer (in bytes) to store the platform
  *                      config. At return its value is updated with the
  *                      exact size of the platform configuration data.
@@ -129,17 +129,15 @@ tfm_attest_hal_get_platform_config(uint32_t *size, uint8_t *buf);
  * According to IANA hash algorithm registry:
  *   - https://www.iana.org/assignments/hash-function-text-names/hash-function-text-names.xml
  *
- * \param[in/out] size  As an input value it indicates the size of the caller
- *                      allocated buffer (in bytes) to store the platform
- *                      hash algo. At return its value is updated with the
- *                      exact size of the platform hahs algo string.
- * \param[out]    buf   Pointer to the buffer to store the platform
+ * \param[out] size     At return its value is updated with the
+ *                      exact size of the platform hash algo string.
+ * \param[out] buf      Double pointer to the buffer to store the platform
  *                      hash algo string.
  *
  * \return  Returns error code specified in \ref tfm_plat_err_t
  */
 enum tfm_plat_err_t
-tfm_attest_hal_get_platform_hash_algo(uint32_t *size, uint8_t *buf);
+tfm_attest_hal_get_platform_hash_algo(uint32_t *size, const char **buf);
 
 #ifdef __cplusplus
 }

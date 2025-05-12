@@ -1,4 +1,15 @@
 Driver_FLASH0
+ARM_Flash_GetVersion
+ARM_Driver_GetCapabilities
+Driver_FLASH0_Initialize
+ARM_Flash_Uninitialize
+ARM_Flash_PowerControl
+Driver_FLASH0_ReadData
+Driver_FLASH0_ProgramData
+Driver_FLASH0_EraseSector
+Driver_FLASH0_EraseChip
+ARM_Flash_GetStatus
+Driver_FLASH0_GetInfo
 SystemInit
 bl1_aes_256_ctr_decrypt
 bl1_derive_key
@@ -24,6 +35,8 @@ tfm_plat_set_nv_counter
 __ubsan_*
 log_error
 log_error_permissions_check
+__assert_func
+__assert_puts
 _write
 tfm_vprintf
 tfm_log

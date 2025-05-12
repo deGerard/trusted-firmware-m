@@ -68,7 +68,7 @@ static enum tfm_plat_err_t tfm_plat_get_iak(const void *ctx,
         return TFM_PLAT_ERR_SYSTEM_ERR;
     }
 
-    kmu_err = kmu_get_key(&KMU_DEV_S, RSE_KMU_SLOT_CPAK_SEED, buf, 32);
+    kmu_err = kmu_get_key(&KMU_DEV_S, RSE_KMU_SLOT_IAK_SEED, buf, 32);
     if (kmu_err != KMU_ERROR_NONE) {
         return TFM_PLAT_ERR_SYSTEM_ERR;
     }
@@ -366,7 +366,7 @@ static const tfm_plat_builtin_key_policy_t g_builtin_keys_policy[] = {
 };
 
 /**
- * @brief Table describing the builtin-in keys (plaform keys) available in the platform. Note
+ * @brief Table describing the builtin-in keys (platform keys) available in the platform. Note
  *        that to bind the keys to the tfm_builtin_key_loader driver, the lifetime must be
  *        explicitly set to the one associated to the driver, i.e. TFM_BUILTIN_KEY_LOADER_LIFETIME
  */

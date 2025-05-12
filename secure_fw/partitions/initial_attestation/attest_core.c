@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2022, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -19,9 +19,13 @@
 #include "tfm_plat_boot_seed.h"
 #include "tfm_attest_hal.h"
 #include "tfm_attest_iat_defs.h"
-#include "t_cose_common.h"
+#include "t_cose/t_cose_common.h"
 #include "tfm_crypto_defs.h"
-#include "tfm_sp_log.h"
+#include "tfm_log_unpriv.h"
+
+#if ATTEST_TOKEN_PROFILE_ARM_CCA
+#include "tfm_strnlen.h"
+#endif
 
 #define ARRAY_LENGTH(array) (sizeof(array) / sizeof(*(array)))
 
@@ -128,7 +132,7 @@ attest_add_all_sw_components(struct attest_token_encode_ctx *token_ctx)
                                         (int64_t)NO_SW_COMPONENT_FIXED_VALUE);
 #else
         /* Mandatory to have SW components claim in the token */
-        LOG_ERRFMT("[ERR][Attest] Boot record is not available\r\n");
+        ERROR_UNPRIV("[Attest] Boot record is not available\n");
         return PSA_ATTEST_ERR_CLAIM_UNAVAILABLE;
 #endif
     }
@@ -389,12 +393,16 @@ static enum psa_attest_err_t
 attest_add_hash_algo_claim(struct attest_token_encode_ctx *token_ctx)
 {
     struct q_useful_buf_c hash_algo;
-    uint8_t buf[PLATFORM_HASH_ALGO_ID_MAX_SIZE];
-    uint32_t size = sizeof(buf);
+    const char *buf = NULL;
+    uint32_t size = 0;
     enum tfm_plat_err_t err;
 
-    err = tfm_attest_hal_get_platform_hash_algo(&size, buf);
-    if (err != TFM_PLAT_ERR_SUCCESS) {
+    err = tfm_attest_hal_get_platform_hash_algo(&size, &buf);
+    if (err != TFM_PLAT_ERR_SUCCESS && buf == NULL) {
+        return PSA_ATTEST_ERR_GENERAL;
+    }
+
+    if ((tfm_strnlen(buf, PLATFORM_HASH_ALGO_ID_MAX_SIZE) != size) || (size == 0)) {
         return PSA_ATTEST_ERR_GENERAL;
     }
 
@@ -484,60 +492,6 @@ static enum psa_attest_err_t attest_verify_challenge_size(size_t challenge_size)
     return PSA_ATTEST_ERR_INVALID_INPUT;
 }
 
-#ifdef INCLUDE_TEST_CODE
-/*!
- * \brief Static function to get the option flags from challenge object
- *
- * Option flags are passed in if the challenge is 64 bytes long and the last
- * 60 bytes are all 0. In this case the first 4 bytes of the challenge is
- * the option flags for test.
- *
- * See flag definition in attest_token.h
- *
- * \param[in]  challenge     Structure to carry the challenge value:
- *                           pointer + challeng's length.
- * \param[out] option_flags  Flags to select different custom options,
- *                           for example \ref TOKEN_OPT_OMIT_CLAIMS.
- * \param[out] key_select    Selects which attestation key to sign with.
- */
-static void attest_get_option_flags(struct q_useful_buf_c *challenge,
-                                    uint32_t *option_flags,
-                                    int32_t  *key_select)
-{
-    uint32_t found_option_flags = 1;
-    uint32_t option_flags_size = sizeof(uint32_t);
-    uint8_t *challenge_end;
-    uint8_t *challenge_data;
-
-    /* Get option flags if there is encoded in the challenge object */
-    if ((challenge->len == PSA_INITIAL_ATTEST_CHALLENGE_SIZE_64) &&
-        (challenge->ptr)) {
-        challenge_end  = ((uint8_t *)challenge->ptr) + challenge->len;
-        challenge_data = ((uint8_t *)challenge->ptr) + option_flags_size;
-
-        /* Compare bytes(4-63) with 0 */
-        while (challenge_data < challenge_end) {
-            if (*challenge_data++ != 0) {
-                found_option_flags = 0;
-                break;
-            }
-        }
-    } else {
-        found_option_flags = 0;
-    }
-
-    if (found_option_flags) {
-        (void)memcpy(option_flags, challenge->ptr, option_flags_size);
-
-        /* Lower three bits are the key select */
-        *key_select = *option_flags & 0x7;
-    } else {
-        *option_flags = 0;
-        *key_select = 0;
-    }
-}
-#endif /* INCLUDE_TEST_CODE */
-
 static enum psa_attest_err_t attest_get_t_cose_algorithm(
         int32_t *cose_algorithm_id)
 {
@@ -586,7 +540,7 @@ static enum psa_attest_err_t attest_get_t_cose_algorithm(
             return PSA_ATTEST_ERR_GENERAL;
         }
     } else {
-        LOG_DBGFMT("Attestation: Unexpected key_type for TFM_BUILTIN_KEY_ID_IAK. Key storage may be corrupted!\r\n");
+        VERBOSE_UNPRIV_RAW("Attestation: Unexpected key_type for TFM_BUILTIN_KEY_ID_IAK. Key storage may be corrupted!\n");
         return PSA_ATTEST_ERR_GENERAL;
     }
 
@@ -646,7 +600,6 @@ attest_create_token(struct q_useful_buf_c *challenge,
     enum attest_token_err_t token_err;
     struct attest_token_encode_ctx attest_token_ctx;
     int32_t key_select = 0;
-    uint32_t option_flags = 0;
     int i;
     int32_t cose_algorithm_id;
 
@@ -655,27 +608,10 @@ attest_create_token(struct q_useful_buf_c *challenge,
         return attest_err;
     }
 
-#ifdef INCLUDE_TEST_CODE
-    attest_get_option_flags(challenge, &option_flags, &key_select);
-    if (option_flags) {
-        /* If any option flags are provided (TOKEN_OPT_OMIT_CLAIMS or
-         * TOKEN_OPT_SHORT_CIRCUIT_SIGN) then force the cose_algorithm_id
-         * to be either:
-         *  - T_COSE_ALGORITHM_ES256 or  (SYMMETRIC_INITIAL_ATTESTATION=OFF)
-         *  - T_COSE_ALGORITHM_HMAC256   (SYMMETRIC_INITIAL_ATTESTATION=ON)
-         * for testing purposes to match with expected minimal token.
-         */
-        /* ESxxx range is smaller than 0; HMACxxx range is greater than 0 */
-        cose_algorithm_id = cose_algorithm_id < 0 ? T_COSE_ALGORITHM_ES256 :
-                                                    T_COSE_ALGORITHM_HMAC256;
-    }
-#endif
-
     /* Get started creating the token. This sets up the CBOR and COSE contexts
      * which causes the COSE headers to be constructed.
      */
     token_err = attest_token_encode_start(&attest_token_ctx,
-                                          option_flags,      /* option_flags */
                                           key_select,        /* key_select   */
                                           cose_algorithm_id, /* alg_select   */
                                           token);
@@ -691,13 +627,11 @@ attest_create_token(struct q_useful_buf_c *challenge,
         goto error;
     }
 
-    if (!(option_flags & TOKEN_OPT_OMIT_CLAIMS)) {
-        for (i = 0; i < ARRAY_LENGTH(claim_query_funcs); ++i) {
-            /* Calling the attest_add_XXX_claim functions */
-            attest_err = claim_query_funcs[i](&attest_token_ctx);
-            if (attest_err != PSA_ATTEST_ERR_SUCCESS) {
-                goto error;
-            }
+    for (i = 0; i < ARRAY_LENGTH(claim_query_funcs); ++i) {
+        /* Calling the attest_add_XXX_claim functions */
+        attest_err = claim_query_funcs[i](&attest_token_ctx);
+        if (attest_err != PSA_ATTEST_ERR_SUCCESS) {
+            goto error;
         }
     }
 

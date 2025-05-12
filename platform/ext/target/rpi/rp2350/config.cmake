@@ -35,7 +35,7 @@ set(PROVISIONING_CODE_PADDED_SIZE       "0x2000"  CACHE STRING    "")
 set(PROVISIONING_VALUES_PADDED_SIZE     "0x400"   CACHE STRING    "")
 set(PROVISIONING_DATA_PADDED_SIZE       "0x400"   CACHE STRING    "")
 
-set(PICO_SDK_FETCH_FROM_GIT_TAG         "2.0.0"   CACHE STRING       "Use the define Pico SDK tag for the build")
+set(PICO_SDK_FETCH_FROM_GIT_TAG         "2.1.1"   CACHE STRING       "Use the define Pico SDK tag for the build")
 
 set(TFM_MBEDCRYPTO_PLATFORM_EXTRA_CONFIG_PATH ${CMAKE_CURRENT_LIST_DIR}/mbedtls_extra_config.h CACHE PATH "Config to append to standard Mbed Crypto config, used by platforms to cnfigure feature support")
 
@@ -44,6 +44,7 @@ set(ITS_ENCRYPTION                      ON           CACHE BOOL      "Enable aut
 set(PLATFORM_DEFAULT_NV_SEED            OFF          CACHE BOOL      "Use default NV seed implementation.")
 set(PLATFORM_DEFAULT_OTP                OFF          CACHE BOOL      "Use trusted on-chip flash to implement OTP memory")
 set(PLATFORM_DEFAULT_NV_COUNTERS        OFF          CACHE BOOL      "Use default nv counter implementation.")
+set(PLATFORM_DEFAULT_ATTEST_HAL         OFF          CACHE BOOL      "Use default attest hal implementation.")
 
 set(PLATFORM_DEFAULT_CRYPTO_KEYS        OFF          CACHE BOOL      "Use default crypto keys implementation.")
 

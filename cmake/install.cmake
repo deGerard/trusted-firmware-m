@@ -7,9 +7,6 @@
 #
 #-------------------------------------------------------------------------------
 
-# Skip "up-to-date" prints to avoid flooding the build output. Just print "installing"
-set(CMAKE_INSTALL_MESSAGE LAZY)
-
 install(DIRECTORY ${CMAKE_BINARY_DIR}/bin/
         DESTINATION bin
 )
@@ -50,6 +47,8 @@ install(FILES       ${INTERFACE_INC_DIR}/tfm_ns_client_ext.h
 install(FILES       ${CMAKE_SOURCE_DIR}/secure_fw/include/config_tfm.h
         DESTINATION ${INSTALL_INTERFACE_INC_DIR})
 install(FILES       ${CMAKE_SOURCE_DIR}/config/config_base.h
+        DESTINATION ${INSTALL_INTERFACE_INC_DIR})
+install(FILES       ${CMAKE_SOURCE_DIR}/secure_fw/spm/include/tfm_hybrid_platform.h
         DESTINATION ${INSTALL_INTERFACE_INC_DIR})
 
 install(FILES       ${INTERFACE_INC_DIR}/tfm_psa_call_pack.h

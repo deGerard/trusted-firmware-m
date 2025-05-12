@@ -46,7 +46,7 @@
 
 /* Whether the AES tunnelling support is enabled. Without this, running CCM mode
  * AES will instead only run the CBC_MAC operation with the CCM IVs, with the
- * CTR decryption having to be done seperately. */
+ * CTR decryption having to be done separately. */
 #define CC3XX_CONFIG_AES_TUNNELLING_ENABLE
 
 /* Whether an external key-loader should be invoked instead of the standard AES
@@ -63,6 +63,9 @@
 /* Whether DMA remapping is enabled */
 #define CC3XX_CONFIG_DMA_REMAP_ENABLE
 
+/* Whether DMA Check for Burst Restricted addresses is enabled */
+#define CC3XX_CONFIG_DMA_BURST_RESTRICTED_ENABLE
+
 /* Whether DMA supports working on cached memories */
 #define CC3XX_CONFIG_DMA_CACHE_FLUSH_ENABLE
 
@@ -76,8 +79,29 @@
 #define CC3XX_CONFIG_DMA_REMAP_REGION_AM 4
 #endif /* CC3XX_CONFIG_DMA_REMAP_REGION_AM */
 
+/* How many DMA Burst remap regions are available */
+#ifndef CC3XX_CONFIG_DMA_BURST_RESTRICTED_REGION_AM
+#define CC3XX_CONFIG_DMA_BURST_RESTRICTED_REGION_AM 1
+#endif /* CC3XX_CONFIG_DMA_BURST_RESTRICTED_REGION_AM */
+
 /* Whether RNG is enabled */
 #define CC3XX_CONFIG_RNG_ENABLE
+
+/* Whether the Continuous Health Tests as per SP800-90B are enabled */
+/* #define CC3XX_CONFIG_RNG_CONTINUOUS_HEALTH_TESTS_ENABLE */
+
+/* Whether RNG uses HMAC_DRBG when RNG_DRBG is selected */
+#define CC3XX_CONFIG_RNG_DRBG_HMAC
+/* Whether RNG uses CTR_DRBG when RNG_DRBG is selected */
+/* #define CC3XX_CONFIG_RNG_DRBG_CTR */
+/* Whether RNG uses HASH_DRBG when RNG_DRBG is selected */
+/* #define CC3XX_CONFIG_RNG_DRBG_HASH */
+
+#if ((defined(CC3XX_CONFIG_RNG_DRBG_HMAC) + \
+     defined(CC3XX_CONFIG_RNG_DRBG_CTR)  + \
+     defined(CC3XX_CONFIG_RNG_DRBG_HASH)) != 1)
+#error "cc3xx_config: RNG config must select a single DRBG"
+#endif /* CC3XX_CONFIG_RNG_DRBG_HMAC + CC3XX_CONFIG_RNG_DRBG_CTR + CC3XX_CONFIG_RNG_DRBG_HASH */
 
 /* Whether the CTR_DRBG is enabled through the generic interface */
 /* #define CC3XX_CONFIG_DRBG_CTR_ENABLE */
@@ -91,28 +115,38 @@
 #define CC3XX_CONFIG_RNG_EXTERNAL_TRNG
 #endif /* RSE_OTP_TRNG */
 
-/* The number of times the TRNG will be re-read when it fails a statical test
- * before an error is returned.
+/**
+ * @brief The number of times the TRNG will be re-read after failing a statistical test
+ *        before an error is returned.
+ *
+ *        The value is chosen to cover all combinations of ROSC IDs and subsampling rates.
+ *        The driver doubles the subsampling rate for each ROSC ID, so the number of
+ *        attempts is calculated as:
+ *
+ *            attempts = ceil(log2(ceil(UINT32_MAX / CC3XX_CONFIG_RNG_SUBSAMPLING_RATE))) * 4
+ *
+ *        Here:
+ *        - "4" is the number of available ring oscillators (ROSCs).
+ *        - Both the division and the log2 operation are ceiled to ensure full coverage.
  */
 #ifndef CC3XX_CONFIG_RNG_MAX_ATTEMPTS
-#define CC3XX_CONFIG_RNG_MAX_ATTEMPTS 16
+#define CC3XX_CONFIG_RNG_MAX_ATTEMPTS 100
 #endif /* CC3XX_CONFIG_RNG_MAX_ATTEMPTS */
 
 /* This is the number of cycles between consecutive samples of the oscillator
- * output. It needs to be set to a _reasonably_ large number, though It's
- * unclear exactly what sort of number is reasonable. In general, if the
- * statistical tests keep failing then increase it, if the RNG is too slow then
- * decrease it.  A sensible default is set here, and has worked correctly with a
- * variety of cc3xx implementations.
+ * output.
  */
 #ifndef CC3XX_CONFIG_RNG_SUBSAMPLING_RATE
-#define CC3XX_CONFIG_RNG_SUBSAMPLING_RATE 0x1337
+#define CC3XX_CONFIG_RNG_SUBSAMPLING_RATE 500
 #endif /* !CC_RNG_SUBSAMPLING_RATE */
 
 /* Between 0 and 3 inclusive. 0 should be the fastest oscillator ring */
 #ifndef CC3XX_CONFIG_RNG_RING_OSCILLATOR_ID
 #define CC3XX_CONFIG_RNG_RING_OSCILLATOR_ID 0
 #endif /* !CC_RNG_RING_OSCILLATOR_ID */
+
+/* Whether PKA SRAM encryption is supported */
+#define CC3XX_CONFIG_PKA_SRAM_ENCRYPTION_SUPPORTED
 
 /* How many virtual registers can be allocated in the PKA engine */
 #ifndef CC3XX_CONFIG_PKA_MAX_VIRT_REG_AMOUNT
@@ -183,6 +217,9 @@
 
 /* Whether DPA mitigations are enabled. Has a code-size and performance cost */
 #define CC3XX_CONFIG_DPA_MITIGATIONS_ENABLE
+
+/* This is the externally provided implementation for hardened word copy */
+#define CC3XX_CONFIG_STDLIB_EXTERNAL_DPA_HARDENED_WORD_COPY
 
 /* Whether DFA mitigations are enabled. Has a code-size and performance cost */
 #define CC3XX_CONFIG_DFA_MITIGATIONS_ENABLE

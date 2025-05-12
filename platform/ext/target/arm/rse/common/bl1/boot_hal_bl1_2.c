@@ -31,6 +31,7 @@
 #include "plat_def_fip_uuid.h"
 #endif
 #include "tfm_plat_nv_counters.h"
+#include "tfm_plat_provisioning.h"
 #include "rse_kmu_keys.h"
 #include "mpu_armv8m_drv.h"
 #include "tfm_hal_device_header.h"
@@ -57,6 +58,7 @@ extern ARM_DRIVER_FLASH FLASH_DEV_NAME;
 #ifdef RSE_USE_ROM_LIB_FROM_SRAM
 extern uint32_t __got_start__;
 extern uint32_t __got_end__;
+extern uint32_t __bl1_1_text_size;
 #endif /* RSE_USE_ROM_LIB_FROM_SRAM */
 
 REGION_DECLARE(Image$$, ARM_LIB_STACK, $$ZI$$Base);
@@ -110,23 +112,39 @@ static void setup_got_register(void)
 static void copy_rom_library_into_sram(void)
 {
     uint32_t got_entry;
+    const size_t code_size = (size_t)&__bl1_1_text_size;
+
+    if (code_size > VM1_SIZE) {
+        FIH_PANIC;
+    }
 
     /* Copy the ROM into VM1 */
-    memcpy((uint8_t *)VM1_BASE_S, (uint8_t *)ROM_BASE_S, BL1_1_CODE_SIZE);
+    memcpy((uint8_t *)VM1_BASE_S, (uint8_t *)ROM_BASE_S, code_size);
 
-    /* Patch the GOT so that any address which pointed into ROM now points into
-     * VM1.
+    /* Patch the GOT so that any address which pointed into ROM
+     * now points into VM1.
      */
-    for (uint32_t * addr = &__got_start__; addr < &__got_end__; addr++) {
+    for (uint32_t *addr = &__got_start__; addr < &__got_end__; addr++) {
         got_entry = *addr;
 
         if (got_entry >= ROM_BASE_S && got_entry < ROM_BASE_S + ROM_SIZE) {
             got_entry -= ROM_BASE_S;
             got_entry += VM1_BASE_S;
         }
+
+        *addr = got_entry;
     }
 }
 #endif /* RSE_USE_ROM_LIB_FROM_SRAM */
+
+static enum tfm_plat_err_t image_load_validate_failure(void)
+{
+    if (!tfm_plat_provisioning_is_required()) {
+        return TFM_PLAT_ERR_BL1_2_PROVISIONING_NOT_REQUIRED;
+    }
+
+    return tfm_plat_provisioning_perform();
+}
 
 /* bootloader platform-specific hw initialization */
 int32_t boot_platform_init(void)
@@ -176,6 +194,10 @@ int32_t boot_platform_init(void)
 #ifdef RSE_USE_HOST_FLASH
     result = host_flash_atu_init_regions_for_image(UUID_RSE_FIRMWARE_BL2, image_offsets);
     if (result != 0) {
+        int32_t recovery_result = boot_initiate_recovery_mode(0);
+        if (recovery_result != TFM_PLAT_ERR_BL1_2_PROVISIONING_NOT_REQUIRED) {
+            return recovery_result;
+        }
         return result;
     }
 #endif
@@ -187,7 +209,6 @@ int32_t boot_platform_post_init(void)
 {
     int32_t rc;
     enum tfm_plat_err_t plat_err;
-    enum kmu_error_t kmu_err;
 
     uint32_t vhuk_seed[8 * RSE_AMOUNT];
     size_t vhuk_seed_len;
@@ -218,7 +239,7 @@ int32_t boot_platform_post_init(void)
         return plat_err;
     }
 
-    plat_err = rse_setup_cpak_seed();
+    plat_err = rse_setup_iak_seed();
     if (plat_err) {
         return plat_err;
     }
@@ -241,21 +262,12 @@ int32_t boot_platform_post_init(void)
         return plat_err;
     }
 
+#ifdef RSE_LOAD_NS_IMAGE
     plat_err = rse_setup_runtime_non_secure_image_encryption_key();
     if (plat_err) {
         return plat_err;
     }
-
-    plat_err = rse_setup_cc3xx_pka_sram_encryption_key();
-    if (plat_err) {
-        return plat_err;
-    }
-
-    /* Load the PKA encryption key, now that it is set up */
-    kmu_err = kmu_export_key(&KMU_DEV_S, RSE_KMU_SLOT_CC3XX_PKA_SRAM_ENCRYPTION_KEY);
-    if (kmu_err != KMU_ERROR_NONE) {
-        return kmu_err;
-    }
+#endif /* RSE_LOAD_NS_IMAGE */
 
     return 0;
 }
@@ -378,4 +390,9 @@ int boot_platform_post_load(uint32_t image_id)
     }
 
     return 0;
+}
+
+int boot_initiate_recovery_mode(uint32_t image_id)
+{
+    return image_load_validate_failure();
 }

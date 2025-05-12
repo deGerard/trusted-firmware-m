@@ -69,7 +69,7 @@
 #define PIN_XL2 1
 #endif
 
-#ifdef NRF54L15_XXAA
+#ifdef NRF54L_SERIES
 /* On nRF54L15 XL1 and XL2 are(P1.00) and XL2(P1.01) */
 #define PIN_XL1 32
 #define PIN_XL2 33
@@ -711,6 +711,20 @@ struct platform_data_t tfm_peripheral_vmc = {
 };
 #endif
 
+#if TFM_PERIPHERAL_GPIOTE20_SECURE
+struct platform_data_t tfm_peripheral_gpiote20 = {
+    NRF_GPIOTE20_S_BASE,
+    NRF_GPIOTE20_S_BASE + (sizeof(NRF_GPIOTE_Type) - 1),
+};
+#endif
+
+#if TFM_PERIPHERAL_GPIOTE30_SECURE
+struct platform_data_t tfm_peripheral_gpiote30 = {
+    NRF_GPIOTE30_S_BASE,
+    NRF_GPIOTE30_S_BASE + (sizeof(NRF_GPIOTE_Type) - 1),
+};
+#endif
+
 #ifdef PSA_API_TEST_IPC
 struct platform_data_t
     tfm_peripheral_FF_TEST_SERVER_PARTITION_MMIO = {
@@ -816,7 +830,7 @@ enum tfm_plat_err_t init_debug(void)
 #error "Debug access controlled by NRF_APPROTECT and NRF_SECURE_APPROTECT."
 #endif
 
-#if defined(NRF_APPROTECT) && !defined(NRF54L15_XXAA)
+#if defined(NRF_APPROTECT) && !defined(NRF54L_SERIES)
     /* For nRF53 and nRF91x1 already active. For nRF9160, active in the next boot.*/
     if (nrfx_nvmc_word_writable_check((uint32_t)&NRF_UICR_S->APPROTECT,
                                     UICR_APPROTECT_PALL_Protected)) {
@@ -825,7 +839,7 @@ enum tfm_plat_err_t init_debug(void)
         return TFM_PLAT_ERR_SYSTEM_ERR;
     }
 #endif
-#if defined(NRF_SECURE_APPROTECT) && !defined(NRF54L15_XXAA)
+#if defined(NRF_SECURE_APPROTECT) && !defined(NRF54L_SERIES)
     /* For nRF53 and nRF91x1 already active. For nRF9160, active in the next boot. */
     if (nrfx_nvmc_word_writable_check((uint32_t)&NRF_UICR_S->SECUREAPPROTECT,
                                     UICR_SECUREAPPROTECT_PALL_Protected)) {
@@ -836,7 +850,7 @@ enum tfm_plat_err_t init_debug(void)
     }
 #endif
 
-#elif defined(NRF91_SERIES) || defined(NRF54L15_XXAA)
+#elif defined(NRF91_SERIES) || defined(NRF54L_SERIES)
 
 #if !defined(DAUTH_CHIP_DEFAULT)
 #error "Debug access on this platform can only be configured by programming the corresponding registers in UICR."
@@ -942,7 +956,7 @@ void sau_and_idau_cfg(void)
 	 * (53/91) and new (54++) platforms. New platforms have a proper SAU
 	 * and IDAU, whereas old platforms do not.
 	 */
-#ifdef NRF54L15_XXAA
+#ifdef NRF54L_SERIES
 	/*
 	 * This SAU configuration aligns with ARM's RSS implementation of
 	 * sau_and_idau_cfg when possible.
@@ -1247,7 +1261,7 @@ static void dppi_channel_configuration(void)
 enum tfm_plat_err_t spu_periph_init_cfg(void)
 {
     /* Peripheral configuration */
-#ifdef NRF54L15_XXAA
+#ifdef NRF54L_SERIES
 	/* Configure features to be non-secure */
 
 	/*
@@ -1311,6 +1325,51 @@ enum tfm_plat_err_t spu_periph_init_cfg(void)
 		spu_peripheral_config_secure(base_addresses[i], SPU_LOCK_CONF_LOCKED);
 	}
 
+
+	/* GPIOTE channel configuration */
+	uint32_t secure_gpiote_channels[] = {
+#if TFM_PERIPHERAL_GPIOTE20_SECURE_CHANNELS_MASK
+	TFM_PERIPHERAL_GPIOTE20_SECURE_CHANNELS_MASK,
+#endif
+#if TFM_PERIPHERAL_GPIOTE30_SECURE_CHANNELS_MASK
+	TFM_PERIPHERAL_GPIOTE30_SECURE_CHANNELS_MASK,
+#endif
+		0 /* Not used, its here to avoid compilation failures */
+	};
+
+	uint32_t gpiote_instances[] = {
+#if TFM_PERIPHERAL_GPIOTE20_SECURE_CHANNELS_MASK
+	NRF_GPIOTE20_S_BASE,
+#endif
+#if TFM_PERIPHERAL_GPIOTE30_SECURE_CHANNELS_MASK
+	NRF_GPIOTE30_S_BASE,
+#endif
+		0 /* Not used, its here to avoid compilation failures */
+	};
+
+	/* Configure the SPU GPIOTE registers. Each GPIOTE can fire 2 interrupts for
+	 * each available channel. If a channel is configured as secure both of the
+	 * interrupts will only available in secure mode so a single configuration
+	 * should suffice.
+	 */
+	for(int i = 0; i < ARRAY_SIZE(gpiote_instances) - 1; i++) {
+
+		NRF_SPU_Type * spu_instance = spu_instance_from_peripheral_addr(gpiote_instances[i]);
+		for (int channel = 0; channel < NRF_SPU_FEATURE_GPIOTE_CHANNEL_COUNT; channel++) {
+			if(secure_gpiote_channels[i] & (1 << channel)){
+				nrf_spu_feature_secattr_set(spu_instance, NRF_SPU_FEATURE_GPIOTE_CHANNEL, 0,
+								channel,
+								true);
+				nrf_spu_feature_lock_enable(spu_instance, NRF_SPU_FEATURE_GPIOTE_CHANNEL, 0, channel);
+
+				nrf_spu_feature_secattr_set(spu_instance, NRF_SPU_FEATURE_GPIOTE_INTERRUPT, 0,
+								channel,
+								true);
+				nrf_spu_feature_lock_enable(spu_instance, NRF_SPU_FEATURE_GPIOTE_INTERRUPT, 0, channel);
+			}
+		}
+	}
+
 	/* Configure NRF_REGULATORS, and NRF_OSCILLATORS to be secure as NRF_REGULATORS.POFCON is needed
 	 * to prevent glitches when the power supply is attacked.
 	 *
@@ -1318,7 +1377,7 @@ enum tfm_plat_err_t spu_periph_init_cfg(void)
 	 * have the same security configuration.
 	 */
 	spu_peripheral_config_secure(NRF_REGULATORS_S_BASE, SPU_LOCK_CONF_LOCKED);
-#else /* NRF54L15_XXAA */
+#else /* NRF54L_SERIES */
 static const uint32_t target_peripherals[] = {
     /* The following peripherals share ID:
      * - FPU (FPU cannot be configured in NRF91 series, it's always NS)
@@ -1450,14 +1509,16 @@ static const uint32_t target_peripherals[] = {
         spu_peripheral_config_non_secure(target_peripherals[i], SPU_LOCK_CONF_UNLOCKED);
     }
 
-#endif /* NRF54L15_XXAA */
+#endif /* NRF54L_SERIES */
 
     /* DPPI channel configuration */
 	dppi_channel_configuration();
 
     /* GPIO pin configuration */
 	uint32_t secure_pins[] = {
+#ifdef TFM_PERIPHERAL_GPIO0_PIN_MASK_SECURE
 		TFM_PERIPHERAL_GPIO0_PIN_MASK_SECURE,
+#endif
 #ifdef TFM_PERIPHERAL_GPIO1_PIN_MASK_SECURE
 		TFM_PERIPHERAL_GPIO1_PIN_MASK_SECURE,
 #endif
@@ -1509,7 +1570,7 @@ static const uint32_t target_peripherals[] = {
     nrf_gpio_pin_control_select(PIN_XL1, NRF_GPIO_PIN_SEL_PERIPHERAL);
     nrf_gpio_pin_control_select(PIN_XL2, NRF_GPIO_PIN_SEL_PERIPHERAL);
 #endif /* NRF53_SERIES */
-#ifdef NRF54L15_XXAA
+#ifdef NRF54L_SERIES
     /* NRF54L has a different define */
     nrf_gpio_pin_control_select(PIN_XL1, NRF_GPIO_PIN_SEL_GPIO);
     nrf_gpio_pin_control_select(PIN_XL2, NRF_GPIO_PIN_SEL_GPIO);
@@ -1565,7 +1626,7 @@ static const uint32_t target_peripherals[] = {
 	}
 #endif /* RRAMC_PRESENT */
 
-#ifdef NRF54L15_XXAA
+#ifdef NRF54L_SERIES
 	/* SOC configuration from Zephyr's soc.c. */
 	int soc_err = nordicsemi_nrf54l_init();
 	if (soc_err) {

@@ -316,14 +316,13 @@ static void pka_write_reg(cc3xx_pka_reg_id_t reg_id, const uint32_t *data,
                           size_t len, bool swap_endian)
 {
     size_t idx;
+    size_t unaligned_bytes = len & (sizeof(uint32_t) - 1);
 
 #ifdef CC3XX_CONFIG_STRICT_UINT32_T_ALIGNMENT
     /* Check alignment */
     assert(((uintptr_t)data & (sizeof(uint32_t) - 1)) == 0);
-#endif
-
-    /* Check length */
     assert((len & (sizeof(uint32_t) - 1)) == 0);
+#endif
 
     /* Check slot */
     assert(reg_id < pka_reg_am_max);
@@ -345,12 +344,48 @@ static void pka_write_reg(cc3xx_pka_reg_id_t reg_id, const uint32_t *data,
         P_CC3XX->pka.memory_map[virt_reg_phys_reg[reg_id]];
     while(!P_CC3XX->pka.pka_done) {}
 
+#ifndef CC3XX_CONFIG_STRICT_UINT32_T_ALIGNMENT
+    if (swap_endian && (unaligned_bytes > 0)) {
+        uint32_t word;
+
+        /* len = 4 is covered outside this scope */
+        while(len > sizeof(uint32_t)) {
+            uint8_t *data_b = (uint8_t *) data + len - sizeof(uint32_t);
+
+            word = data_b[0] << 24 | data_b[1] << 16 | data_b[2] << 8 | data_b[3];
+            P_CC3XX->pka.pka_sram_wdata = word;
+            while(!P_CC3XX->pka.pka_done) {}
+            len -= sizeof(uint32_t);
+        }
+
+        /* Last unaligned word */
+        word = bswap_32(data[0]);
+        word >>= (8 * (sizeof(uint32_t) - unaligned_bytes));
+
+        P_CC3XX->pka.pka_sram_wdata = word;
+        while(!P_CC3XX->pka.pka_done) {}
+
+        return;
+    }
+#endif
+
     /* Write data */
     for (idx = 0; idx < len / sizeof(uint32_t); idx++) {
         P_CC3XX->pka.pka_sram_wdata = swap_endian ? bswap_32(data[(len / sizeof(uint32_t) - 1) - idx])
                                                   : data[idx];
         while(!P_CC3XX->pka.pka_done) {}
     }
+
+#ifndef CC3XX_CONFIG_STRICT_UINT32_T_ALIGNMENT
+    /* Unaligned and little endian */
+    if (unaligned_bytes > 0) {
+        uint32_t word = 0;
+        memcpy(&word, data + len / sizeof(uint32_t), unaligned_bytes);
+
+        P_CC3XX->pka.pka_sram_wdata = word;
+        while(!P_CC3XX->pka.pka_done) {}
+    }
+#endif
 }
 
 void cc3xx_lowlevel_pka_write_reg_swap_endian(cc3xx_pka_reg_id_t reg_id, const uint32_t *data,
@@ -368,15 +403,13 @@ static void pka_read_reg(cc3xx_pka_reg_id_t reg_id, uint32_t *data, size_t len,
                          bool swap_endian)
 {
     size_t idx;
-
+    size_t unaligned_bytes = len & (sizeof(uint32_t) - 1);
 
 #ifdef CC3XX_CONFIG_STRICT_UINT32_T_ALIGNMENT
     /* Check alignment */
     assert(((uintptr_t)data & (sizeof(uint32_t) - 1)) == 0);
-#endif
-
-    /* Check length */
     assert((len & (sizeof(uint32_t) - 1)) == 0);
+#endif
 
     /* Check slot */
     assert(reg_id < pka_reg_am_max);
@@ -395,7 +428,28 @@ static void pka_read_reg(cc3xx_pka_reg_id_t reg_id, uint32_t *data, size_t len,
         P_CC3XX->pka.memory_map[virt_reg_phys_reg[reg_id]];
     while(!P_CC3XX->pka.pka_done) {}
 
-    /* Read data */
+#ifndef CC3XX_CONFIG_STRICT_UINT32_T_ALIGNMENT
+    if (swap_endian && (unaligned_bytes > 0)) {
+        uint32_t word;
+
+        /* len = 4 is covered outside this scope */
+        while(len > sizeof(uint32_t)) {
+            uint8_t *data_b = (uint8_t *) data + len - sizeof(uint32_t);
+
+            word = bswap_32(P_CC3XX->pka.pka_sram_rdata);
+            memcpy(data_b, &word, sizeof(uint32_t));
+            len -= sizeof(uint32_t);
+        }
+
+        /* Last unaligned word */
+        word = bswap_32(P_CC3XX->pka.pka_sram_rdata);
+        memcpy(data, ((uint8_t *) &word) + (sizeof(uint32_t) - unaligned_bytes), unaligned_bytes);
+
+        return;
+    }
+#endif
+
+    /* Copy aligned words */
     for (idx = 0; idx < len / sizeof(uint32_t); idx++) {
         if (swap_endian) {
             data[(len / sizeof(uint32_t) -1) - idx] = bswap_32(P_CC3XX->pka.pka_sram_rdata);
@@ -403,6 +457,14 @@ static void pka_read_reg(cc3xx_pka_reg_id_t reg_id, uint32_t *data, size_t len,
             data[idx] = P_CC3XX->pka.pka_sram_rdata;
         }
     }
+
+#ifndef CC3XX_CONFIG_STRICT_UINT32_T_ALIGNMENT
+    /* Copy remaining unaligned bytes for little endian */
+    if (unaligned_bytes > 0) {
+        uint32_t word = P_CC3XX->pka.pka_sram_rdata;
+        memcpy(data + len / sizeof(uint32_t), &word, unaligned_bytes);
+    }
+#endif
 }
 
 void cc3xx_lowlevel_pka_read_reg(cc3xx_pka_reg_id_t reg_id, uint32_t *data, size_t len)
@@ -426,6 +488,7 @@ void cc3xx_lowlevel_pka_read_reg_swap_endian(cc3xx_pka_reg_id_t reg_id, uint32_t
  * representable in n + 64 bits. It is assumed, but not certain, that this holds
  * because of how the reduction in hardware is being calculated.
  */
+#ifdef CC3XX_CONFIG_PKA_CALC_NP_ENABLE
 static inline void calc_Np(void)
 {
     cc3xx_pka_reg_id_t reg_temp_0 = cc3xx_lowlevel_pka_allocate_reg();
@@ -464,6 +527,7 @@ static inline void calc_Np(void)
     cc3xx_lowlevel_pka_free_reg(reg_temp_1);
     cc3xx_lowlevel_pka_free_reg(reg_temp_0);
 }
+#endif /* CC3XX_CONFIG_PKA_CALC_NP_ENABLE */
 
 void cc3xx_lowlevel_pka_set_modulus(cc3xx_pka_reg_id_t modulus, bool calculate_tag,
                                     cc3xx_pka_reg_id_t barrett_tag)
@@ -732,7 +796,7 @@ cc3xx_err_t cc3xx_lowlevel_pka_set_to_random(cc3xx_pka_reg_id_t r0, size_t bit_l
     cc3xx_err_t err;
 
     err = cc3xx_lowlevel_rng_get_random((uint8_t *)random_buf, word_size * sizeof(uint32_t),
-                                        CC3XX_RNG_CRYPTOGRAPHICALLY_SECURE);
+                                        CC3XX_RNG_DRBG);
     if (err != CC3XX_ERR_SUCCESS) {
         return err;
     }
@@ -1323,3 +1387,10 @@ void cc3xx_lowlevel_pka_reduce(cc3xx_pka_reg_id_t r0)
      */
     cc3xx_lowlevel_pka_and(r0, CC3XX_PKA_REG_N_MASK, r0);
 }
+
+#ifdef CC3XX_CONFIG_PKA_SRAM_ENCRYPTION_SUPPORTED
+void cc3xx_lowlevel_pka_sram_encryption_enable(void)
+{
+    P_CC3XX->pka.pka_ram_enc = 0x1U;
+}
+#endif /* CC3XX_CONFIG_PKA_SRAM_ENCRYPTION_SUPPORTED */

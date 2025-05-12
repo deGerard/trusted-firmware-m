@@ -1,18 +1,22 @@
 /*
- * Copyright (c) 2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
  */
 
+#include "lcm_drv.h"
 #include "rse_test_common.h"
 
 #include "cc3xx_tests.h"
 #include "rse_provisioning_tests.h"
 #include "test_state_transitions.h"
 
-#define ARRAY_SIZE(arr) (sizeof(arr)/sizeof((arr)[0]))
+#ifdef TEST_DCSU_DRV
+#include "test_dcsu_drv.h"
+#endif /* TEST_DCSU_DRV */
 
+#define ARRAY_SIZE(arr) (sizeof(arr)/sizeof((arr)[0]))
 
 static struct conditional_test_t provisioning_tests[] = {
     {
@@ -22,7 +26,7 @@ static struct conditional_test_t provisioning_tests[] = {
         .test = {
             &rse_bl1_provisioning_test_0001,
             "RSE_BL1_1_PROVISIONING_TEST_0001",
-            "Provisioning basic bundle validation test"
+            "Provisioning basic blob validation test"
         },
     },
     {
@@ -32,7 +36,7 @@ static struct conditional_test_t provisioning_tests[] = {
         .test = {
             &rse_bl1_provisioning_test_0002,
             "RSE_BL1_1_PROVISIONING_TEST_0002",
-            "Provisioning negative bundle validation test"
+            "Provisioning negative blob validation test"
         },
     },
     {
@@ -42,7 +46,7 @@ static struct conditional_test_t provisioning_tests[] = {
         .test = {
             &rse_bl1_provisioning_test_0003,
             "RSE_BL1_1_PROVISIONING_TEST_0003",
-            "Provisioning invalid key test"
+            "Provisioning AES invalid key test"
         },
     },
     {
@@ -52,6 +56,16 @@ static struct conditional_test_t provisioning_tests[] = {
         .test = {
             &rse_bl1_provisioning_test_0004,
             "RSE_BL1_1_PROVISIONING_TEST_0004",
+            "Provisioning ECDSA invalid key test"
+        },
+    },
+    {
+        .any_tp_mode = true,
+        .any_lcs = true,
+        .any_sp_state = true,
+        .test = {
+            &rse_bl1_provisioning_test_0005,
+            "RSE_BL1_1_PROVISIONING_TEST_0005",
             "Provisioning required test"
         },
     },
@@ -86,43 +100,113 @@ static struct conditional_test_t provisioning_tests[] = {
         },
     },
     {
-        .any_tp_mode = true,
-        .any_lcs = true,
-        .sp_enabled = LCM_FALSE,
+        .tp_mode = LCM_TP_MODE_PCI,
+        .lcs = LCM_LCS_CM,
+        .any_sp_state = true,
         .test = {
             &rse_bl1_provisioning_test_0301,
             "RSE_BL1_1_PROVISIONING_TEST_0301",
-            "Provisioning integration negative key setup test"
+            "Provisioning integration CM invalid blob LCS test"
         },
     },
     {
-        .any_tp_mode = true,
-        .any_lcs = true,
-        .sp_enabled = LCM_TRUE,
+        .tp_mode = LCM_TP_MODE_PCI,
+        .lcs = LCM_LCS_DM,
+        .any_sp_state = true,
         .test = {
             &rse_bl1_provisioning_test_0302,
             "RSE_BL1_1_PROVISIONING_TEST_0302",
-            "Provisioning integration negative authentication test"
+            "Provisioning integration DM invalid blob LCS test"
+        },
+    },
+    {
+        .tp_mode = LCM_TP_MODE_PCI,
+        .any_lcs = true,
+        .sp_enabled = LCM_TRUE,
+        .test = {
+            &rse_bl1_provisioning_test_0401,
+            "RSE_BL1_1_PROVISIONING_TEST_0401",
+            "Provisioning integration PCI negative authentication test"
+        },
+    },
+    {
+        .tp_mode = LCM_TP_MODE_TCI,
+        .any_lcs = true,
+        .sp_enabled = LCM_TRUE,
+        .test = {
+            &rse_bl1_provisioning_test_0402,
+            "RSE_BL1_1_PROVISIONING_TEST_0402",
+            "Provisioning integration TCI negative authentication test"
+        },
+    },
+    {
+        .tp_mode = LCM_TP_MODE_PCI,
+        .any_lcs = true,
+        .sp_enabled = LCM_TRUE,
+        .test = {
+            &rse_bl1_provisioning_test_0403,
+            "RSE_BL1_1_PROVISIONING_TEST_0403",
+            "Provisioning integration PCI positive test"
+        },
+    },
+    {
+        .tp_mode = LCM_TP_MODE_TCI,
+        .any_lcs = true,
+        .sp_enabled = LCM_TRUE,
+        .test = {
+            &rse_bl1_provisioning_test_0404,
+            "RSE_BL1_1_PROVISIONING_TEST_0404",
+            "Provisioning integration TCI positive test"
         },
     },
     {
         .any_tp_mode = true,
-        .any_lcs = true,
-        .sp_enabled = LCM_TRUE,
+        .lcs = LCM_LCS_CM,
+        .any_sp_state = true,
         .test = {
-            &rse_bl1_provisioning_test_0303,
-            "RSE_BL1_1_PROVISIONING_TEST_0303",
-            "Provisioning integration negative tag test"
+            &rse_bl1_provisioning_test_0405,
+            "RSE_BL1_1_PROVISIONING_TEST_0405",
+            "Provisioning ECDSA key in blob test setup"
         },
     },
     {
-        .any_tp_mode = true,
-        .any_lcs = true,
+        .tp_mode = LCM_TP_MODE_PCI,
+        .lcs = LCM_LCS_DM,
         .sp_enabled = LCM_TRUE,
         .test = {
-            &rse_bl1_provisioning_test_0304,
-            "RSE_BL1_1_PROVISIONING_TEST_0304",
-            "Provisioning integration return value test"
+            &rse_bl1_provisioning_test_0406,
+            "RSE_BL1_1_PROVISIONING_TEST_0406",
+            "Provisioning ECDSA key in blob PCI positive test"
+        },
+    },
+    {
+        .tp_mode = LCM_TP_MODE_TCI,
+        .lcs = LCM_LCS_DM,
+        .sp_enabled = LCM_TRUE,
+        .test = {
+            &rse_bl1_provisioning_test_0407,
+            "RSE_BL1_1_PROVISIONING_TEST_0407",
+            "Provisioning ECDSA key in blob TCI positive test"
+        },
+    },
+    {
+        .tp_mode = LCM_TP_MODE_PCI,
+        .lcs = LCM_LCS_DM,
+        .sp_enabled = LCM_TRUE,
+        .test = {
+            &rse_bl1_provisioning_test_0408,
+            "RSE_BL1_1_PROVISIONING_TEST_0408",
+            "Provisioning invalid ECDSA key in blob PCI test"
+        },
+    },
+    {
+        .tp_mode = LCM_TP_MODE_TCI,
+        .lcs = LCM_LCS_DM,
+        .sp_enabled = LCM_TRUE,
+        .test = {
+            &rse_bl1_provisioning_test_0409,
+            "RSE_BL1_1_PROVISIONING_TEST_0409",
+            "Provisioning invalid ECDSA key in blob TCI test"
         },
     },
 };
@@ -195,6 +279,10 @@ static struct test_t bl1_1_extra_tests[100];
 void register_testsuite_extra_bl1_1(struct test_suite_t *p_test_suite)
 {
     set_testsuite("RSE Tests", bl1_1_extra_tests, 0, p_test_suite);
+
+#ifdef TEST_DCSU_DRV
+    add_dcsu_drv_tests_to_testsuite(p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
+#endif /* TEST_DCSU_DRV */
 
     add_conditional_tests_to_testsuite(provisioning_tests, ARRAY_SIZE(provisioning_tests),
                                        p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));

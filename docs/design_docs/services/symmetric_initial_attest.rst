@@ -60,16 +60,9 @@ affected. Refer to Initial Attestation Service Integration Guide [3]_ for
 details of the implementation of Initial Attestation secure service.
 
 Symmetric Initial Attestation invokes ``t_cose`` library to build up
-``COSE_Mac0`` structure.
-``COSE_Mac0`` support is added to ``t_cose`` library in TF-M since official
-``t_cose`` hasn't supported ``COSE_Mac0`` yet. The design of ``COSE_Mac0``
-support is covered in `COSE_Mac0 support in t_cose`_.
-
-.. note ::
-
-    The ``COSE_Mac0`` implementation in this proposal is a prototype only for
-    Proof of Concept so far. It may be replaced after ``t_cose`` officially
-    supports ``COSE_Mac0`` message.
+``COSE_Mac0`` structure. ``COSE_Mac0`` support was originally added to the
+``t_cose`` library fork in TF-M, however since ``t_cose 2.0`` it is part of
+the upstream library [4]_ which is already used by TF-M too.
 
 Several HAL APIs are defined to fetch platform specific assets required by
 Symmetric Initial Attestation. For example, ``tfm_plat_get_symmetric_iak()``
@@ -105,20 +98,17 @@ In Initial Attestation secure service, symmetric Initial Attestation implements
 the following steps in ``attest_create_token()``, which are different from those
 of asymmetric Initial Attestation.
 
-    - ``attest_token_start()``
-    - Instance ID claims
-    - ``attest_token_finish()``
+    - ``attest_token_start()``,
+    - Instance ID claims,
+    - ``attest_token_finish()``.
 
 If ``SYMMETRIC_INITIAL_ATTESTATION`` is selected, symmetric Initial Attestation
 dedicated implementations of those steps are included in build.
 Otherwise, asymmetric Initial Attestation dedicated implementations are included
-instead.
-
-Symmetric Initial Attestation implementation resides a new file
+instead. Symmetric Initial Attestation implementation resides a new file
 ``attest_symmetric_key.c`` to handle symmetric Instance ID related operations.
 Symmetric Initial Attestation dedicated ``attest_token_start()`` and
 ``attest_token_finish()`` are added in ``attestation_token.c``.
-
 The details are covered in following sections.
 
 Symmetric Instance ID
@@ -127,7 +117,7 @@ Symmetric Instance ID
 Symmetric Initial Attestation dedicated ``attest_symmetric_key.c`` implements
 the ``attest_get_instance_id()`` function. This function returns the Instance ID
 value, calculating it if it has not already been calculated. Refer to
-`Instance ID claim_` for more details.
+`Instance ID claim`_ for more details.
 
 .. note ::
 
@@ -146,7 +136,7 @@ hash algorithm of Instance ID calculation.
 
 .. note ::
 
-    According to RFC2104 [4]_, if a HMAC key is longer than the HMAC block size,
+    According to RFC2104 [5]_, if a HMAC key is longer than the HMAC block size,
     the key will be first hashed. The hash output is used as the key in HMAC
     computation.
 
@@ -170,7 +160,7 @@ attest_token_start()
 ====================
 
 Symmetric Initial Attestation dedicated ``attest_token_start()`` initializes the
-``COSE_Mac0`` signing context and builds up the ``COSE_Mac0`` Header.
+``COSE_Mac0`` computation context and builds up the ``COSE_Mac0`` Header.
 
 The workflow inside ``attest_token_start()`` is shown in
 :ref:`attest-token-start-figure` below.
@@ -198,18 +188,16 @@ Descriptions of each step are listed below:
 #. ``QCBOREncode_OpenMap()`` prepares for encoding the ``COSE_Mac0`` payload,
    which is filled with IAT claims.
 
-All the ``COSE_Mac0`` functionalities in ``t_cose`` are covered in
-`COSE_Mac0 support in t_cose`_.
+For detailed description and documentation of the ``COSE_Mac0`` functionalities
+please refer to the ``t_cose`` repository [4]_.
 
 Instance ID claim
 =================
 
 Symmetric Initial Attestation also implements Instance ID claims in
-``attest_add_instance_id_claim()``.
-
-The Instance ID value is fetched via ``attest_get_instance_id()``.
-The value has already been calculated during symmetric IAK registration. See
-`Instance ID calculation`_ for details.
+``attest_add_instance_id_claim()``. The Instance ID value is fetched via
+``attest_get_instance_id()``. The value has already been calculated during
+symmetric IAK registration. See `Instance ID calculation`_ for details.
 
 The other steps are the same as those in asymmetric Initial Attestation
 implementation. The UEID type byte is set to 0x01.
@@ -219,12 +207,9 @@ attest_token_finish()
 
 Symmetric Initial Attestation dedicated ``attest_token_finish()`` calls
 ``t_cose_mac0_encode_tag()`` to calculate and encode the authentication tag of
-``COSE_Mac0`` structure.
-
-The whole COSE and CBOR encoding are completed in ``attest_token_finish()``.
-
-The simplified flow in ``attest_token_finish()`` is shown in
-:ref:`attest-token-finish-figure` below.
+``COSE_Mac0`` structure. The whole COSE and CBOR encoding are completed in
+``attest_token_finish()``. The simplified flow in ``attest_token_finish()`` is
+shown in :ref:`attest-token-finish-figure` below.
 
 .. _attest-token-finish-figure:
 
@@ -232,221 +217,6 @@ The simplified flow in ``attest_token_finish()`` is shown in
     :align: center
 
     Workflow in symmetric Initial Attestation ``attest_token_finish()``
-
-***************************
-COSE_Mac0 support in t_cose
-***************************
-
-``COSE_Mac0`` supports in ``t_cose`` in TF-M include the following major
-functionalities:
-
-    - Encoding ``COSE_Mac0`` structure
-    - Decoding and verifying ``COSE_Mac0`` structure
-    - HMAC computation to generate and verify authentication tag
-    - Short-circuit tagging for test mode
-
-According to RFC8152 [5]_, ``COSE_Mac0`` and ``COSE_Sign1`` have similar
-structures. Therefore, the prototype follows ``COSE_Sign1`` implementation to
-build up ``COSE_Mac0`` file structure and implement ``COSE_Mac0`` encoding and
-decoding.
-
-Although ``COSE_Mac0`` can share lots of data types, APIs and encoding/decoding
-steps with ``COSE_Sign1`` in implementation, this prototype separates
-``COSE_Mac0`` implementation from ``COSE_Sign1``. ``COSE_Mac0`` owns its
-dedicated signing/verification contexts, APIs and encoding/decoding process.
-The purposes of separating ``COSE_Mac0`` and ``COSE_Sign1`` are listed below
-
-- It can keep changes to ``COSE_Sign1`` as small as possible and avoid conflicts
-  with development in ``COSE_Sign1```. It can decrease conflicts if ``t_cose``
-  in TF-M is synchronized with original ``t_cose`` repository later.
-- ``COSE_Mac0`` and ``COSE_Sign1`` are exclusive in TF-M use cases.
-  It cannot decrease TF-M memory footprint by extracting the common components
-  shared by ``COSE_Mac0`` and ``COSE_Sign1`` but can make the design
-  over-complicated.
-
-.. note ::
-
-    Only HMAC is supported in current ``COSE_Mac0`` prototype.
-
-File structure
-==============
-
-New files are added to implement the functionalities listed above. The structure
-of files is shown in the table below.
-
-.. table:: New files in ``t_cose``
-    :widths: auto
-    :align: center
-
-    +---------------------+--------------------------------+----------------------------------------------+
-    | Directory           | Files                          | Descriptions                                 |
-    +=====================+================================+==============================================+
-    | ``src``             | ``t_cose_mac0_sign.c``         | Encode ``COSE_Mac0`` structure               |
-    |                     +--------------------------------+----------------------------------------------+
-    |                     | ``t_cose_mac0_verify.c``       | Decode and verify ``COSE_Mac0`` structure.   |
-    +---------------------+--------------------------------+----------------------------------------------+
-    | ``inc``             | ``t_cose_mac0_sign.h``         | Data type definitions and function           |
-    |                     |                                | declarations of encoding and signing         |
-    |                     |                                | ``COSE_Mac0`` message.                       |
-    |                     +--------------------------------+----------------------------------------------+
-    |                     | ``t_cose_mac0_verify.h``       | Data type definitions and function           |
-    |                     |                                | declarations of verifying ``COSE_Mac0``      |
-    |                     |                                | message.                                     |
-    +---------------------+--------------------------------+----------------------------------------------+
-
-Other ``t_cose`` files may also be changed to add ``COSE_Mac0`` associated data
-types and function declarations.
-
-HMAC operations are added in ``crypto_adapters/t_cose_psa_crypto.c``.
-Preprocessor flags are added to select corresponding crypto for COSE message
-signing and verification.
-
-    - ``T_COSE_ENABLE_SIGN1`` selects ECDSA and Hash operations for
-      ``COSE_Sign1``.
-    - ``T_COSE_ENABLE_MAC0`` selects HMAC operations for ``COSE_Mac0``.
-
-Encoding COSE_Mac0
-==================
-
-Following ``COSE_Sign1`` implementation, ``COSE_Mac0`` encoding exports similar
-functions to Initial Attestation secure service.
-The major functions are listed below.
-
-Initialize signing context
---------------------------
-
-``t_cose_mac0_sign_init()`` initializes ``COSE_Mac0`` signing context and
-configures option flags and algorithm used in signing.
-
-.. code-block:: c
-
-    static void
-    t_cose_mac0_sign_init(struct t_cose_mac0_sign_ctx *me,
-                          int32_t                      option_flags,
-                          int32_t                      cose_algorithm_id);
-
-The ``COSE_Mac0`` signing context is defined as
-
-.. code-block:: c
-
-    struct t_cose_mac0_sign_ctx {
-        /* Private data structure */
-        uint8_t               protected_parameters_buffer[
-                                    T_COSE_MAC0_MAX_SIZE_PROTECTED_PARAMETERS];
-        struct q_useful_buf_c protected_parameters; /* The encoded protected parameters */
-        int32_t               cose_algorithm_id;
-        struct t_cose_key     signing_key;
-        int32_t               option_flags;
-        struct q_useful_buf_c kid;
-        ...
-    };
-
-Set signing key
----------------
-
-``t_cose_mac0_set_signing_key()`` sets the key used in ``COSE_Mac0`` signing.
-Optional ``kid``, as a key identifier, will be encoded into ``COSE_Mac0`` Header
-unprotected bucket.
-
-.. code-block:: c
-
-    static void
-    t_cose_mac0_set_signing_key(struct t_cose_mac0_sign_ctx *me,
-                                struct t_cose_key            signing_key,
-                                struct q_useful_buf_c        kid);
-
-Encode Header parameters
-------------------------
-
-``t_cose_mac0_encode_parameters()`` encodes the ``COSE_Mac0`` Header parameters
-and outputs the encoded context to ``cbor_encode_ctx``.
-
-.. code-block:: c
-
-    enum t_cose_err_t
-    t_cose_mac0_encode_parameters(struct t_cose_mac0_sign_ctx *context,
-                                  QCBOREncodeContext          *cbor_encode_ctx);
-
-Calculate and add authentication tag
-------------------------------------
-
-``t_cose_mac0_encode_tag()`` calculates the authentication tag and finishes the
-``COSE_Mac0`` message.
-
-.. code-block:: c
-
-    enum t_cose_err_t
-    t_cose_mac0_encode_tag(struct t_cose_mac0_sign_ctx *context,
-                           QCBOREncodeContext          *cbor_encode_ctx);
-
-Decoding COSE_Mac0
-==================
-
-Following ``COSE_Sign1`` implementation, ``COSE_Mac0`` decoding exports similar
-functions to test suite of Initial Attestation.
-The major functions are listed below.
-
-Initialize verification context
--------------------------------
-
-``t_cose_mac0_verify_init()`` initializes ``COSE_Mac0`` verification context and
-configures option flags in verification.
-
-.. code-block:: c
-
-    static void
-    t_cose_mac0_verify_init(struct t_cose_mac0_verify_ctx *context,
-                            int32_t                        option_flags);
-
-The ``COSE_Mac0`` verification context is defined as
-
-.. code-block:: c
-
-    struct t_cose_mac0_verify_ctx {
-        /* Private data structure */
-        struct t_cose_key     verification_key;
-        int32_t               option_flags;
-    };
-
-Set verification key
---------------------
-
-``t_cose_mac0_set_verify_key()`` sets the key for verifying ``COSE_Mac0``
-authentication tag.
-
-.. code-block:: c
-
-    static void
-    t_cose_mac0_set_verify_key(struct t_cose_mac0_verify_ctx *context,
-                               struct t_cose_key              verify_key);
-
-Decode and verify COSE_Mac0
----------------------------
-
-``t_cose_mac0_verify()`` decodes the ``COSE_Mac0`` structure and verifies the
-authentication tag.
-
-.. code-block:: c
-
-    enum t_cose_err_t
-    t_cose_mac0_verify(struct t_cose_mac0_verify_ctx *context,
-                       struct q_useful_buf_c          cose_mac0,
-                       struct q_useful_buf_c         *payload,
-                       struct t_cose_parameters      *parameters);
-
-Short-circuit tagging
-=====================
-
-If ``T_COSE_OPT_SHORT_CIRCUIT_TAG`` option is enabled, ``COSE_Mac0`` encoding
-will hash the ``COSE_Mac0`` content and add the hash output as an authentication
-tag. It is useful when critical symmetric IAK is unavailable or cannot be
-accessed, perhaps because it has not been provisioned or configured for the
-particular device. It is only for test and must not be used in actual use case.
-The ``kid`` parameter will either be skipped in ``COSE_Mac0`` Header.
-
-If ``T_COSE_OPT_ALLOW_SHORT_CIRCUIT`` option is enabled, ``COSE_Mac0`` decoding
-will only verify the hash output, without requiring symmetric key for
-authentication tag verification.
 
 ***************
 TF-M Test suite
@@ -483,7 +253,7 @@ If the decoding is required from secure test suite,
 ``attest_token_decode_validate_token()`` will fetch symmetric IAK to verify the
 authentication tag in ``COSE_Mac0`` structure.
 If the decoding is required from non-secure test suite,
-``attest_token_decode_validate_token()`` will decode ``COSE_Mac0`` only by
+``attest_token_decode_validate_token()`` will only decode ``COSE_Mac0`` by
 setting ``T_COSE_OPT_DECODE_ONLY`` option flag. Non-secure must not access the
 symmetric IAK.
 
@@ -555,10 +325,10 @@ Reference
 
 .. [3] :doc:`Initial Attestation Service Integration Guide </integration_guide/services/tfm_attestation_integration_guide>`
 
-.. [4] `HMAC: Keyed-Hashing for Message Authentication <https://tools.ietf.org/html/rfc2104>`_
+.. [4] `t_cose library <https://github.com/laurencelundblade/t_cose/blob/v2.0-alpha-2/inc/t_cose/t_cose_mac_compute.h>`_
 
-.. [5] `CBOR Object Signing and Encryption (COSE) <https://tools.ietf.org/html/rfc8152>`_
+.. [5] `HMAC: Keyed-Hashing for Message Authentication <https://tools.ietf.org/html/rfc2104>`_
 
 ----------------
 
-*Copyright (c) 2020-2022 Arm Limited. All Rights Reserved.*
+*Copyright (c) 2020-2025 Arm Limited. All Rights Reserved.*

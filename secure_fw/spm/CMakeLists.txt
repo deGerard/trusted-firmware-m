@@ -1,5 +1,5 @@
 #-------------------------------------------------------------------------------
-# Copyright (c) 2020-2023, Arm Limited. All rights reserved.
+# SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
 # Copyright (c) 2021-2023 Cypress Semiconductor Corporation (an Infineon
 # company) or an affiliate of Cypress Semiconductor Corporation. All rights
 # reserved.
@@ -26,7 +26,10 @@ add_library(tfm_arch INTERFACE)
 
 add_dependencies(tfm_spm manifest_tool)
 
-# Generate TF-M version
+# Get current time as a timestamp
+string(TIMESTAMP BUILD_TIMESTAMP "%a %d %b %Y %H:%M:%S" UTC)
+
+# Generate TF-M version and timestamp strings
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/include/tfm_version.h.in
                ${CMAKE_BINARY_DIR}/generated/secure_fw/spm/include/tfm_version.h)
 
@@ -48,7 +51,6 @@ target_sources(tfm_spm
     PRIVATE
         core/tfm_boot_data.c
         core/utilities.c
-        $<$<NOT:$<STREQUAL:${TFM_SPM_LOG_LEVEL},TFM_SPM_LOG_LEVEL_SILENCE>>:core/spm_log.c>
         core/arch/tfm_arch.c
         core/main.c
         core/spm_ipc.c
@@ -56,6 +58,7 @@ target_sources(tfm_spm
         core/psa_api.c
         core/psa_call_api.c
         $<$<BOOL:${TFM_MULTI_CORE_TOPOLOGY}>:core/mailbox_agent_api.c>
+        $<$<BOOL:${TFM_MULTI_CORE_TOPOLOGY}>:core/tfm_rpc.c>
         core/psa_version_api.c
         core/psa_read_write_skip_api.c
         $<$<BOOL:${PSA_FRAMEWORK_HAS_MM_IOVEC}>:core/psa_mmiovec_api.c>

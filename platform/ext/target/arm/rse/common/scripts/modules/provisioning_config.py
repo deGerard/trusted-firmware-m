@@ -18,14 +18,11 @@ from otp_config import OTP_config
 from cryptography.hazmat.primitives import hashes
 
 import logging
-logger = logging.getLogger("TF-M")
+logger = logging.getLogger("TF-M.{}".format(__name__))
 
 from cryptography.hazmat.primitives.serialization import load_der_public_key, Encoding, PublicFormat
 
 from crypto_conversion_utils import convert_hash_define
-
-import logging
-logger = logging.getLogger("TF-M")
 
 all_regions = ['cm', 'dm']
 
@@ -126,29 +123,46 @@ def add_arguments(parser : argparse.ArgumentParser,
 def _get_policy_field(provisioning_config, field_owner, area_index):
     return getattr(provisioning_config, "{}_layout".format(field_owner)).get_field("{}.rotpk_areas_{}.{}_rotpk_policies".format(field_owner, area_index, field_owner))
 
-def _handle_rotpk_hash_alg(f : str,
-                           v : str,
+def _handle_rotpk_hash_alg(args: argparse.Namespace,
+                           f : str,
+                           v : C_enum,
                            field_owner : str,
                            provisioning_config,
                            **kwargs
                            ):
-    policy_word_field = _get_policy_field(provisioning_config, field_owner, _get_rotpk_area_index(f))
+    rotpk = "{}.rotpk_areas_{}.rotpk_{}".format(field_owner, _get_rotpk_area_index(f),
+                                                _get_rotpk_index(f))
+    rotpk = arg_utils.join_prefix(rotpk, field_owner)
+    if rotpk not in vars(args) or not getattr(args, rotpk):
+        logger.warning("{} set but {} is not".format(f, rotpk))
+        return
+
+    area_index = _get_rotpk_area_index(f)
+    policy_word_field = _get_policy_field(provisioning_config, field_owner, area_index)
     policy_word = policy_word_field.get_value()
     rotpk_index = _get_rotpk_index(f)
 
-    getattr(provisioning_config, "{}_rotpk_hash_algs".format(field_owner))[rotpk_index] = v.name
+    getattr(provisioning_config, "{}_rotpk_hash_algs".format(field_owner))[(area_index, rotpk_index)] = v.name
 
     v = v.get_value()
     policy_word |= v << (12 + rotpk_index)
     policy_word_field.set_value(policy_word)
 
 
-def _handle_rotpk_policy(f : str,
-                         v : str,
+def _handle_rotpk_policy(args: argparse.Namespace,
+                         f : str,
+                         v : C_enum,
                          field_owner : str,
                          provisioning_config,
                          **kwargs
                          ):
+    rotpk = "{}.rotpk_areas_{}.rotpk_{}".format(field_owner, _get_rotpk_area_index(f),
+                                                _get_rotpk_index(f))
+    rotpk = arg_utils.join_prefix(rotpk, field_owner)
+    if rotpk not in vars(args) or not getattr(args, rotpk):
+        logger.warning("{} set but {} is not".format(f, rotpk))
+        return
+
     policy_word_field = _get_policy_field(provisioning_config, field_owner, _get_rotpk_area_index(f))
     policy_word = policy_word_field.get_value()
     rotpk_index = _get_rotpk_index(f)
@@ -157,12 +171,20 @@ def _handle_rotpk_policy(f : str,
     policy_word |= v << (18 + rotpk_index)
     policy_word_field.set_value(policy_word)
 
-def _handle_rotpk_type(f : str,
-                       v : str,
+def _handle_rotpk_type(args: argparse.Namespace,
+                       f : str,
+                       v : C_enum,
                        field_owner : str,
                        provisioning_config,
                        **kwargs
                        ):
+    rotpk = "{}.rotpk_areas_{}.rotpk_{}".format(field_owner, _get_rotpk_area_index(f),
+                                                _get_rotpk_index(f))
+    rotpk = arg_utils.join_prefix(rotpk, field_owner)
+    if rotpk not in vars(args) or not getattr(args, rotpk):
+        logger.warning("{} set but {} is not".format(f, rotpk))
+        return
+
     policy_word_field = _get_policy_field(provisioning_config, field_owner, _get_rotpk_area_index(f))
     policy_word = policy_word_field.get_value()
     rotpk_index = _get_rotpk_index(f)
@@ -173,7 +195,8 @@ def _handle_rotpk_type(f : str,
     policy_word |= v << (2 * rotpk_index)
     policy_word_field.set_value(policy_word)
 
-def _handle_rotpk(f : str,
+def _handle_rotpk(args: argparse.Namespace,
+                  f : str,
                   v : bytes,
                   field_owner : str,
                   otp_config : OTP_config,
@@ -184,9 +207,11 @@ def _handle_rotpk(f : str,
 
     rotpk_index = _get_rotpk_index(f)
     if hasattr(otp_config.defines, "RSE_OTP_{}_ROTPK_IS_HASH_NOT_KEY".format(field_owner.upper())):
-        assert rotpk_index in getattr(provisioning_config, "{}_rotpk_hash_algs".format(field_owner)).keys(), "--{}:{}.rotpk_hash_alg_{} required but not set".format(field_owner, field_owner, rotpk_index)
+        area_index = _get_rotpk_area_index(f)
+        assert (area_index, rotpk_index) in getattr(provisioning_config, "{}_rotpk_hash_algs".format(field_owner)).keys(), "--{}:{}.rotpk_hash_alg_{} required but not set".format(field_owner, field_owner, rotpk_index)
 
-        hash_alg = getattr(provisioning_config, "{}_rotpk_hash_algs".format(field_owner))[rotpk_index]
+        hash_alg = getattr(provisioning_config,
+                           "{}_rotpk_hash_algs".format(field_owner))[area_index, rotpk_index]
         hash_alg = convert_hash_define(hash_alg, "RSE_ROTPK_HASH_ALG_")
         digest = hashes.Hash(hash_alg())
         digest.update(v)
@@ -204,8 +229,8 @@ def _handle_rotpk(f : str,
 arg_parse_handlers = {
     "rotpk_type_"      : _handle_rotpk_type,
     "rotpk_policy_"    : _handle_rotpk_policy,
-    "rotpk_hash_alg_" : _handle_rotpk_hash_alg,
-    "rotpk_" : _handle_rotpk,
+    "rotpk_hash_alg_"  : _handle_rotpk_hash_alg,
+    "rotpk_"           : _handle_rotpk,
 }
 
 def parse_args(args : argparse.Namespace,
@@ -238,8 +263,8 @@ def parse_args(args : argparse.Namespace,
 
         for h in arg_parse_handlers.keys():
             if h in f:
-                logger.info("Running hander {} on field {}".format(arg_parse_handlers[h], f))
-                v = arg_parse_handlers[h](f, v, field_owner=field_owner,
+                logger.info("Running handler {} on field {}".format(arg_parse_handlers[h], f))
+                v = arg_parse_handlers[h](args, f, v, field_owner=field_owner,
                                           otp_config = otp_config, **out)
                 break
 
@@ -353,8 +378,10 @@ if __name__ == "__main__":
     parser.add_argument("--provisioning_config_output_file", help="file to output provisioning config to", required=True)
     parser.add_argument("--log_level", help="log level", required=False, default="ERROR", choices=logging._levelToName.values())
 
+    from rich import inspect
     args = parser.parse_args()
-    logger.setLevel(args.log_level)
+    logging.getLogger("TF-M").setLevel(args.log_level)
+    logger.addHandler(logging.StreamHandler())
 
     includes = c_include.get_includes(args.compile_commands_file, "otp_lcm.c")
     defines = c_include.get_defines(args.compile_commands_file, "otp_lcm.c")

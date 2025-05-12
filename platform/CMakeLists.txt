@@ -28,9 +28,6 @@ endif()
 
 set(PLATFORM_DIR ${CMAKE_CURRENT_LIST_DIR} CACHE PATH "Path to platform directory")
 
-# Skip "up-to-date" prints to avoid flooding the build output. Just print "installing"
-set(CMAKE_INSTALL_MESSAGE LAZY)
-
 add_subdirectory(ext/target/${TFM_PLATFORM} target)
 
 #====================== CMSIS stack override interface ========================#
@@ -64,7 +61,6 @@ target_include_directories(platform_common_interface
 target_include_directories(platform_s
     PUBLIC
         $<$<BOOL:${CRYPTO_HW_ACCELERATOR}>:${CMAKE_CURRENT_SOURCE_DIR}/ext/accelerator/interface>
-        ../secure_fw/spm/include/private
 )
 
 target_sources(platform_s
@@ -79,6 +75,7 @@ target_sources(platform_s
         $<$<BOOL:${PLATFORM_DEFAULT_NV_COUNTERS}>:ext/common/template/nv_counters.c>
         $<$<BOOL:${PLATFORM_DEFAULT_ROTPK}>:ext/common/template/tfm_rotpk.c>
         $<$<BOOL:${PLATFORM_DEFAULT_NV_SEED}>:ext/common/template/crypto_nv_seed.c>
+        $<$<BOOL:${PLATFORM_DEFAULT_SHARED_MEASUREMENT_DATA}>:ext/common/template/tfm_shared_measurement_data.c>
         $<$<OR:$<AND:$<BOOL:${PLATFORM_DEFAULT_NV_COUNTERS}>,$<BOOL:${TFM_PARTITION_PROTECTED_STORAGE}>>,$<BOOL:${PLATFORM_DEFAULT_OTP}>>:ext/common/template/flash_otp_nv_counters_backend.c>
         $<$<BOOL:${PLATFORM_DEFAULT_OTP}>:ext/common/template/otp_flash.c>
         $<$<BOOL:${PLATFORM_DEFAULT_PROVISIONING}>:ext/common/provisioning.c>
@@ -102,23 +99,25 @@ target_link_libraries(platform_s
         tfm_fih_headers
         cmsis_stack_override
         cmsis
+        tfm_log_headers
         $<$<BOOL:${CONFIG_TFM_BACKTRACE_ON_CORE_PANIC}>:tfm_log_unpriv>
         $<$<BOOL:${CONFIG_TFM_BACKTRACE_ON_CORE_PANIC}>:tfm_log>
         $<$<BOOL:${CONFIG_TFM_BACKTRACE_ON_CORE_PANIC}>:tfm_backtrace>
     PRIVATE
         tfm_config
-        tfm_spm_defs # For tfm_spm_log.h
+        tfm_spm_defs
         $<$<BOOL:${TFM_PARTITION_CRYPTO}>:platform_crypto_keys>
         $<$<BOOL:${PLATFORM_DEFAULT_ATTEST_HAL}>:tfm_sprt>
         $<$<BOOL:${TFM_PARTITION_CRYPTO}>:crypto_service_mbedcrypto>
         $<$<BOOL:${TFM_PARTITION_INITIAL_ATTESTATION}>:tfm_attestation_defs>
         $<$<NOT:$<STREQUAL:${TFM_FIH_PROFILE},OFF>>:tfm_fih>
+        tfm_log
         psa_crypto_library_config
 )
 
 target_compile_definitions(platform_s
     PUBLIC
-        TFM_SPM_LOG_LEVEL=${TFM_SPM_LOG_LEVEL}
+        LOG_LEVEL=${TFM_SPM_LOG_LEVEL}
         $<$<BOOL:${TFM_SPM_LOG_RAW_ENABLED}>:TFM_SPM_LOG_RAW_ENABLED>
         $<$<BOOL:${CONFIG_TFM_BACKTRACE_ON_CORE_PANIC}>:CONFIG_TFM_BACKTRACE_ON_CORE_PANIC>
         $<$<BOOL:${CONFIG_TFM_BACKTRACE_ON_CORE_PANIC}>:LOG_LEVEL=LOG_LEVEL_ERROR>
@@ -136,8 +135,8 @@ target_compile_definitions(platform_s
         $<$<BOOL:${PLATFORM_DEFAULT_OTP}>:PLATFORM_DEFAULT_OTP>
         $<$<BOOL:${PLATFORM_DEFAULT_ROTPK}>:PLATFORM_DEFAULT_ROTPK>
         $<$<BOOL:${PLATFORM_DEFAULT_NV_COUNTERS}>:PLATFORM_DEFAULT_NV_COUNTERS>
-        $<$<AND:$<BOOL:${TFM_LOG_FATAL_ERRORS}>,$<NOT:$<STREQUAL:${TFM_SPM_LOG_LEVEL},"TFM_SPM_LOG_LEVEL_SILENCE">>>:LOG_FATAL_ERRORS>
-        $<$<AND:$<BOOL:${TFM_LOG_NONFATAL_ERRORS}>,$<NOT:$<STREQUAL:${TFM_SPM_LOG_LEVEL},"TFM_SPM_LOG_LEVEL_SILENCE">>>:LOG_NONFATAL_ERRORS>
+        $<$<AND:$<BOOL:${TFM_LOG_FATAL_ERRORS}>,$<NOT:$<STREQUAL:${TFM_SPM_LOG_LEVEL},"LOG_LEVEL_NONE">>>:LOG_FATAL_ERRORS>
+        $<$<AND:$<BOOL:${TFM_LOG_NONFATAL_ERRORS}>,$<NOT:$<STREQUAL:${TFM_SPM_LOG_LEVEL},"LOG_LEVEL_NONE">>>:LOG_NONFATAL_ERRORS>
     PRIVATE
         $<$<BOOL:${SYMMETRIC_INITIAL_ATTESTATION}>:SYMMETRIC_INITIAL_ATTESTATION>
         $<$<BOOL:${TFM_DUMMY_PROVISIONING}>:TFM_DUMMY_PROVISIONING>
@@ -205,8 +204,10 @@ if(BL2)
             $<$<BOOL:${PLATFORM_DEFAULT_ROTPK}>:ext/common/template/tfm_rotpk.c>
             $<$<OR:$<BOOL:${PLATFORM_DEFAULT_NV_COUNTERS}>,$<BOOL:${PLATFORM_DEFAULT_OTP}>>:ext/common/template/flash_otp_nv_counters_backend.c>
             $<$<BOOL:${PLATFORM_DEFAULT_OTP}>:ext/common/template/otp_flash.c>
+            $<$<BOOL:${PLATFORM_DEFAULT_SHARED_MEASUREMENT_DATA}>:ext/common/template/tfm_shared_measurement_data.c>
             $<$<BOOL:${BL2_SANITIZE}>:ext/common/tfm_sanitize_handlers.c>
             ./ext/common/tfm_fatal_error.c
+            ./ext/common/tfm_assert.c
     )
 
     target_link_libraries(platform_bl2
@@ -215,9 +216,12 @@ if(BL2)
             platform_region_defs
             cmsis_stack_override
             cmsis
+            tfm_log_headers
         PRIVATE
             bl2_crypto
             bl2_hal
+            tfm_log
+            tfm_vprintf
             mcuboot_config
             $<$<AND:$<BOOL:${CONFIG_TFM_BOOT_STORE_MEASUREMENTS}>,$<NOT:$<BOOL:${CONFIG_TFM_BOOT_STORE_ENCODED_MEASUREMENTS}>>>:tfm_boot_status>
     )
@@ -236,8 +240,9 @@ if(BL2)
             $<$<BOOL:${PLATFORM_DEFAULT_OTP_WRITEABLE}>:OTP_WRITEABLE>
             $<$<BOOL:${PLATFORM_DEFAULT_ROTPK}>:PLATFORM_DEFAULT_ROTPK>
             $<$<AND:$<BOOL:${CONFIG_TFM_BOOT_STORE_MEASUREMENTS}>,$<NOT:$<BOOL:${CONFIG_TFM_BOOT_STORE_ENCODED_MEASUREMENTS}>>>:TFM_MEASURED_BOOT_API>
-            $<$<AND:$<BOOL:${TFM_LOG_FATAL_ERRORS}>,$<BOOL:${MCUBOOT_LOG_LEVEL}>>:LOG_FATAL_ERRORS>
-            $<$<AND:$<BOOL:${TFM_LOG_NONFATAL_ERRORS}>,$<BOOL:${MCUBOOT_LOG_LEVEL}>>:LOG_NONFATAL_ERRORS>
+            $<$<AND:$<BOOL:${TFM_LOG_FATAL_ERRORS}>,$<NOT:$<STREQUAL:${TFM_BL2_LOG_LEVEL},"LOG_LEVEL_NONE">>>:LOG_FATAL_ERRORS>
+            $<$<AND:$<BOOL:${TFM_LOG_FATAL_ERRORS}>,$<NOT:$<STREQUAL:${TFM_BL2_LOG_LEVEL},"LOG_LEVEL_NONE">>>:LOG_NONFATAL_ERRORS>
+            LOG_LEVEL=${TFM_BL2_LOG_LEVEL}
     )
 
     target_compile_options(platform_bl2
@@ -306,8 +311,10 @@ if(BL1 AND PLATFORM_DEFAULT_BL1)
             ext/common/uart_stdout.c
             $<$<BOOL:${PLATFORM_DEFAULT_OTP}>:ext/common/template/flash_otp_nv_counters_backend.c>
             $<$<BOOL:${PLATFORM_DEFAULT_OTP}>:ext/common/template/otp_flash.c>
+            $<$<BOOL:${PLATFORM_DEFAULT_SHARED_MEASUREMENT_DATA}>:ext/common/template/tfm_shared_measurement_data.c>
             $<$<OR:$<BOOL:${BL1_1_SANITIZE}>,$<BOOL:${TFM_BL1_2_SANITIZE}>>:ext/common/tfm_sanitize_handlers.c>
             ./ext/common/tfm_fatal_error.c
+            ./ext/common/tfm_assert.c
     )
 
     target_link_libraries(platform_bl1_1
@@ -318,6 +325,7 @@ if(BL1 AND PLATFORM_DEFAULT_BL1)
         PRIVATE
             tfm_fih
             tfm_log
+            tfm_vprintf
             tfm_fih_headers
             tfm_boot_status
     )
@@ -362,6 +370,7 @@ if(BL1 AND PLATFORM_DEFAULT_BL1)
             $<$<BOOL:${PLATFORM_DEFAULT_NV_COUNTERS}>:ext/common/template/nv_counters.c>
             $<$<OR:$<BOOL:${PLATFORM_DEFAULT_NV_COUNTERS}>,$<BOOL:${PLATFORM_DEFAULT_OTP}>>:ext/common/template/flash_otp_nv_counters_backend.c>
             $<$<BOOL:${PLATFORM_DEFAULT_OTP}>:ext/common/template/otp_flash.c>
+            $<$<BOOL:${PLATFORM_DEFAULT_SHARED_MEASUREMENT_DATA}>:ext/common/template/tfm_shared_measurement_data.c>
     )
 
     target_link_libraries(platform_bl1_2
@@ -371,6 +380,7 @@ if(BL1 AND PLATFORM_DEFAULT_BL1)
             tfm_fih
             tfm_fih_headers
             tfm_log
+            tfm_vprintf
             tfm_boot_status
             platform_region_defs
             bl1_1_shared_lib_interface
@@ -428,6 +438,8 @@ target_compile_definitions(platform_region_defs
         $<$<BOOL:${TFM_BL1_2_MEASUREMENT_HASH_ALG}>:TFM_BL1_2_MEASUREMENT_HASH_ALG=TFM_BL1_HASH_ALG_${TFM_BL1_2_MEASUREMENT_HASH_ALG}>
         $<$<BOOL:${TFM_BL1_2_MEASUREMENT_HASH_ALG}>:TFM_BL1_ENABLE_${TFM_BL1_2_ROTPK_HASH_ALG}>
         $<$<BOOL:${TFM_BL1_2_ROTPK_HASH_ALG}>:TFM_BL1_ENABLE_${TFM_BL1_2_ROTPK_HASH_ALG}>
+        $<$<BOOL:${TFM_BL1_2_ROTPK_HASH_ALG}>:TFM_BL1_2_ROTPK_HASH_ALG=RSE_ROTPK_HASH_ALG_${TFM_BL1_2_ROTPK_HASH_ALG}>
+        $<$<BOOL:${MCUBOOT_ROTPK_HASH_ALG}>:MCUBOOT_ROTPK_HASH_ALG=RSE_ROTPK_HASH_ALG_${MCUBOOT_ROTPK_HASH_ALG}>
         $<$<BOOL:${TFM_BL1_1_MEASUREMENT_HASH_ALG}>:TFM_BL1_1_MEASUREMENT_HASH_ALG=TFM_BL1_HASH_ALG_${TFM_BL1_1_MEASUREMENT_HASH_ALG}>
         $<$<BOOL:${TFM_BL1_1_MEASUREMENT_HASH_ALG}>:TFM_BL1_ENABLE_${TFM_BL1_1_ROTPK_HASH_ALG}>
         $<$<BOOL:${MCUBOOT_HW_KEY}>:MCUBOOT_HW_KEY>

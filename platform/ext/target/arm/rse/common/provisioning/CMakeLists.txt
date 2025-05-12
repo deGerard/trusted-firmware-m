@@ -12,6 +12,8 @@ add_subdirectory(bundle)
 target_sources(platform_s
     PRIVATE
         ./runtime_stub_provisioning.c
+        $<$<BOOL:${RSE_HAS_DCSU}>:${CMAKE_CURRENT_SOURCE_DIR}/rse_provisioning_comms_dcsu.c>
+        $<$<NOT:$<BOOL:${RSE_HAS_DCSU}>>:${CMAKE_CURRENT_SOURCE_DIR}/rse_provisioning_comms_stub.c>
 )
 
 target_sources(platform_bl2
@@ -19,17 +21,26 @@ target_sources(platform_bl2
         ./bl2_stub_provisioning.c
 )
 
+target_sources(platform_bl1_2
+    PRIVATE
+        ./bl1_2_provisioning.c
+)
+
 target_sources(platform_bl1_1
     PRIVATE
-        ./bl1_provisioning.c
-        ./rse_provisioning_comms.c
+        ./bl1_1_provisioning.c
+        $<$<BOOL:${RSE_HAS_DCSU}>:${CMAKE_CURRENT_SOURCE_DIR}/rse_provisioning_comms_dcsu.c>
+        $<$<NOT:$<BOOL:${RSE_HAS_DCSU}>>:${CMAKE_CURRENT_SOURCE_DIR}/rse_provisioning_comms_stub.c>
         ./rse_provisioning_message_handler.c
         ./rse_provisioning_rotpk.c
+        ./rse_provisioning_tci_key.c
+        ./rse_provisioning_aes_key.c
 )
 
 target_link_libraries(platform_bl1_1
     PUBLIC
         tfm_log
+        tfm_vprintf
 )
 
 target_include_directories(platform_bl1_1_interface

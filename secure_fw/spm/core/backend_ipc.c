@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  * Copyright (c) 2021-2024 Cypress Semiconductor Corporation (an Infineon
  * company) or an affiliate of Cypress Semiconductor Corporation. All rights
  * reserved.
@@ -9,6 +9,7 @@
  */
 
 #include <stdint.h>
+#include <assert.h>
 #include "aapcs_local.h"
 #include "async.h"
 #include "config_spm.h"
@@ -26,7 +27,6 @@
 #include "tfm_rpc.h"
 #include "ffm/backend.h"
 #include "utilities.h"
-#include "private/assert.h"
 #include "memory_symbols.h"
 #include "load/partition_defs.h"
 #include "load/service_defs.h"
@@ -35,12 +35,12 @@
 #include "internal_status_code.h"
 #include "sprt_partition_metadata_indicator.h"
 
+#if TFM_PARTITION_NS_AGENT_MAILBOX == 1
+#include "psa_manifest/ns_agent_mailbox.h"
+#endif
+
 /* Declare the global component list */
 struct partition_head_t partition_listhead;
-
-#if TFM_ISOLATION_LEVEL > 1
-extern uintptr_t spm_boundary;
-#endif
 
 #ifdef CONFIG_TFM_USE_TRUSTZONE
 /* Instance for SPM_THREAD_CONTEXT */
@@ -97,6 +97,10 @@ static uint32_t query_state(const struct thread_t *p_thrd, uint32_t *p_retval)
         if ((retval_signals ==  ASYNC_MSG_REPLY) &&
             ((p_pt->signals_allowed & ASYNC_MSG_REPLY) != ASYNC_MSG_REPLY)) {
             p_pt->signals_asserted &= ~ASYNC_MSG_REPLY;
+
+#ifndef NDEBUG
+            assert(p_pt->p_replied->status < TFM_HANDLE_STATUS_MAX);
+#endif
 
             /*
              * For FF-M Secure Partition, the reply is synchronous and only one
@@ -161,7 +165,7 @@ static void prv_process_metadata(struct partition_t *p_pt)
 #if TFM_ISOLATION_LEVEL == 1
     p_rt_meta->psa_fns = &psa_api_thread_fn_call;
 #else
-    FIH_CALL(tfm_hal_boundary_need_switch, fih_rc, spm_boundary, p_pt->boundary);
+    FIH_CALL(tfm_hal_boundary_need_switch, fih_rc, get_spm_boundary(), p_pt->boundary);
     if (fih_not_eq(fih_rc, fih_int_encode(false))) {
         p_rt_meta->psa_fns = &psa_api_svc;
     } else {
@@ -252,7 +256,7 @@ static thrd_fn_t partition_init(struct partition_t *p_pt,
     thrd_fn_t thrd_entry;
 
     (void)param;
-    SPM_ASSERT(p_pt);
+    assert(p_pt);
 
 #if CONFIG_TFM_DOORBELL_API == 1
     p_pt->signals_allowed |= PSA_DOORBELL;
@@ -285,8 +289,8 @@ static thrd_fn_t ns_agent_tz_init(struct partition_t *p_pt,
     thrd_fn_t thrd_entry;
 
     (void)service_setting;
-    SPM_ASSERT(p_pt);
-    SPM_ASSERT(param);
+    assert(p_pt);
+    assert(param);
 
     tz_ns_agent_register_client_id_range(p_pt->p_ldinf->client_id_base,
                                          p_pt->p_ldinf->client_id_limit);
@@ -348,7 +352,7 @@ uint32_t backend_system_run(void)
     const struct partition_t *p_cur_pt;
     fih_int fih_rc = FIH_FAILURE;
 
-    SPM_ASSERT(SPM_THREAD_CONTEXT);
+    assert(SPM_THREAD_CONTEXT);
 
 #ifndef CONFIG_TFM_USE_TRUSTZONE
     /*
@@ -399,6 +403,41 @@ psa_signal_t backend_wait_signals(struct partition_t *p_pt, psa_signal_t signals
     return ret;
 }
 
+#if (CONFIG_TFM_HYBRID_PLAT_SCHED_TYPE == TFM_HYBRID_PLAT_SCHED_NSPE)
+static void backend_assert_hybridplat_signal(
+    struct partition_t *p_pt, psa_signal_t signal)
+{
+    const struct irq_load_info_t *irq_info;
+    uint32_t irq_info_idx;
+    uint32_t nirqs;
+
+    if (IS_NS_AGENT_MAILBOX(p_pt->p_ldinf)) {
+        nirqs = p_pt->p_ldinf->nirqs;
+        irq_info = LOAD_INFO_IRQ(p_pt->p_ldinf);
+        for (irq_info_idx = 0; irq_info_idx < nirqs; irq_info_idx++) {
+            if (irq_info == NULL) {
+                tfm_core_panic();
+            }
+            if (irq_info[irq_info_idx].signal == signal) {
+                break;
+            }
+        }
+
+        if (irq_info_idx < nirqs) {
+            /*
+             * The incoming signal is found in the irq_load_info_t,
+             * do not assert the signal now.
+             * NSPE will drive the processing for this request via the mailbox
+             * dedicated auxiliary service.
+             */
+            return;
+        }
+    }
+
+    p_pt->signals_asserted |= signal;
+}
+#endif
+
 psa_status_t backend_assert_signal(struct partition_t *p_pt, psa_signal_t signal)
 {
     struct critical_section_t cs_signal = CRITICAL_SECTION_STATIC_INIT;
@@ -409,7 +448,12 @@ psa_status_t backend_assert_signal(struct partition_t *p_pt, psa_signal_t signal
     }
 
     CRITICAL_SECTION_ENTER(cs_signal);
+
+#if (CONFIG_TFM_HYBRID_PLAT_SCHED_TYPE == TFM_HYBRID_PLAT_SCHED_NSPE)
+    backend_assert_hybridplat_signal(p_pt, signal);
+#else
     p_pt->signals_asserted |= signal;
+#endif
 
     if (p_pt->signals_asserted & p_pt->signals_waiting) {
         ret = STATUS_NEED_SCHEDULE;
@@ -489,7 +533,7 @@ uint64_t ipc_schedule(uint32_t exc_return)
          * Non-Secure code was executing, and a scheduling is necessary because
          * a secure partition become runnable.
          */
-        SPM_ASSERT(!basepri_set_by_ipc_schedule);
+        assert(!basepri_set_by_ipc_schedule);
         basepri_set_by_ipc_schedule = true;
         __set_BASEPRI(SECURE_THREAD_EXECUTION_PRIORITY);
     }
@@ -503,7 +547,8 @@ uint64_t ipc_schedule(uint32_t exc_return)
      */
     p_curr_ctx->sp = __get_PSP() -
         (is_default_stacking_rules_apply(exc_return) ?
-            sizeof(struct tfm_additional_context_t) : 0);
+            sizeof(struct tfm_additional_context_t) : 0) -
+            TFM_FPU_CONTEXT_SIZE;
 
     pth_next = thrd_next();
 
@@ -514,7 +559,7 @@ uint64_t ipc_schedule(uint32_t exc_return)
 
     if ((pth_next != NULL) && (p_part_curr != p_part_next)) {
         /* Check if there is enough room on stack to save more context */
-        if ((p_curr_ctx->sp_limit +
+        if ((p_curr_ctx->sp_limit + TFM_FPU_CONTEXT_SIZE +
                 sizeof(struct tfm_additional_context_t)) > __get_PSP()) {
             tfm_core_panic();
         }
@@ -545,7 +590,7 @@ uint64_t ipc_schedule(uint32_t exc_return)
              * enter and exit). In this case basepri_set_by_ipc_schedule is set,
              * so it can be used in the condition.
              */
-            SPM_ASSERT(__get_BASEPRI() == SECURE_THREAD_EXECUTION_PRIORITY);
+            assert(__get_BASEPRI() == SECURE_THREAD_EXECUTION_PRIORITY);
             if (basepri_set_by_ipc_schedule) {
                 basepri_set_by_ipc_schedule = false;
                 __set_BASEPRI(0);
@@ -564,7 +609,6 @@ uint64_t ipc_schedule(uint32_t exc_return)
     }
     p_partition_metadata = (uintptr_t)(p_part_next->p_metadata);
 
-#ifdef TFM_FIH_PROFILE_ON
     /*
      * ctx_ctrl is set from struct thread_t's p_context_ctrl, and p_part_curr
      * and p_part_next are calculated from the thread pointer.
@@ -589,7 +633,6 @@ uint64_t ipc_schedule(uint32_t exc_return)
     if ((uintptr_t)GET_CTX_OWNER(ctx_ctrls.u32_regs.r1)->p_metadata != p_partition_metadata) {
         tfm_core_panic();
     }
-#endif
 
     CRITICAL_SECTION_LEAVE(cs);
 

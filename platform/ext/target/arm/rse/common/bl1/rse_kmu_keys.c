@@ -104,6 +104,8 @@ static enum tfm_plat_err_t duplicate_into_next_slot(enum rse_kmu_slot_id_t slot,
     size_t kmu_slot_size;
     enum tfm_plat_err_t plat_err;
 
+    /* kmu_get_key_buffer_ptr validates whether slot and slot + 1 are valid slots */
+
     kmu_err = kmu_get_key_buffer_ptr(&KMU_DEV_S, slot,
                                      &p_kmu_slot_buf, &kmu_slot_size);
     if (kmu_err != KMU_ERROR_NONE) {
@@ -294,11 +296,9 @@ enum tfm_plat_err_t setup_key_from_rng(enum rse_kmu_slot_id_t slot,
     return plat_err;
 }
 
-/* FixMe: This needs renaming to rse_setup_iak_seed() as CPAK is CCA specific */
-enum tfm_plat_err_t rse_setup_cpak_seed(void)
+enum tfm_plat_err_t rse_setup_iak_seed(void)
 {
-    /* FixMe: CPAK comes from CCA, the label needs updating to be aligned with spec */
-    const uint8_t iak_seed_label[] = "BL1_CPAK_SEED_DERIVATION";
+    const uint8_t iak_seed_label[] = "BL1_IAK_SEED_DERIVATION";
 
     /* FixMe: updated spec removes the context and simplifies the procedure */
 #if defined(RSE_BOOT_KEYS_CCA ) || defined(RSE_BOOT_KEYS_DPE)
@@ -325,7 +325,7 @@ enum tfm_plat_err_t rse_setup_cpak_seed(void)
      */
     return setup_key_from_derivation(KMU_HW_SLOT_HUK, NULL, iak_seed_label,
                                      sizeof(iak_seed_label), NULL, 0,
-                                     RSE_KMU_SLOT_CPAK_SEED, /* FixMe: The slot needs rename to IAK_SEED */
+                                     RSE_KMU_SLOT_IAK_SEED,
                                      &aes_key0_export_config, NULL, false,
                                      boot_state_config);
 }
@@ -454,11 +454,18 @@ static enum tfm_plat_err_t derive_using_krtl_or_zero_key(const uint8_t *label,
     enum lcm_tp_mode_t tp_mode;
     enum lcm_bool_t sp_enabled;
     enum rse_kmu_slot_id_t input_slot;
+    enum lcm_error_t lcm_err;
     uint32_t *key_buf;
 
-    lcm_get_tp_mode(&LCM_DEV_S, &tp_mode);
+    lcm_err = lcm_get_tp_mode(&LCM_DEV_S, &tp_mode);
+    if (lcm_err != LCM_ERROR_NONE) {
+        return (enum tfm_plat_err_t)lcm_err;
+    }
 
-    lcm_get_sp_enabled(&LCM_DEV_S, &sp_enabled);
+    lcm_err = lcm_get_sp_enabled(&LCM_DEV_S, &sp_enabled);
+    if (lcm_err != LCM_ERROR_NONE) {
+        return (enum tfm_plat_err_t)lcm_err;
+    }
 
     if (sp_enabled != LCM_TRUE) {
         return TFM_PLAT_ERR_SYSTEM_ERR;
@@ -545,8 +552,8 @@ enum tfm_plat_err_t rse_setup_runtime_secure_image_encryption_key(void)
     enum kmu_error_t kmu_err;
     const uint8_t label[] = "RUNTIME_SECURE_ENCRYPTION_KEY";
     const boot_state_include_mask boot_state_config =
-        RSE_BOOT_STATE_INCLUDE_LCS | RSE_BOOT_STATE_INCLUDE_TP_MODE |
-        RSE_BOOT_STATE_INCLUDE_BL1_2_HASH | RSE_BOOT_STATE_INCLUDE_REPROVISIONING_BITS;
+        RSE_BOOT_STATE_INCLUDE_TP_MODE | RSE_BOOT_STATE_INCLUDE_BL1_2_HASH |
+        RSE_BOOT_STATE_INCLUDE_REPROVISIONING_BITS;
 
     plat_err = setup_key_from_derivation(KMU_HW_SLOT_KCE_CM, NULL,
                                          label, sizeof(label), NULL, 0,
@@ -574,8 +581,8 @@ enum tfm_plat_err_t rse_setup_runtime_non_secure_image_encryption_key(void)
     enum kmu_error_t kmu_err;
     const uint8_t label[] = "RUNTIME_NON_SECURE_ENCRYPTION_KEY";
     const boot_state_include_mask boot_state_config =
-        RSE_BOOT_STATE_INCLUDE_LCS | RSE_BOOT_STATE_INCLUDE_TP_MODE |
-        RSE_BOOT_STATE_INCLUDE_BL1_2_HASH | RSE_BOOT_STATE_INCLUDE_REPROVISIONING_BITS;
+        RSE_BOOT_STATE_INCLUDE_TP_MODE | RSE_BOOT_STATE_INCLUDE_BL1_2_HASH |
+        RSE_BOOT_STATE_INCLUDE_REPROVISIONING_BITS;
 
     plat_err = setup_key_from_derivation(KMU_HW_SLOT_KCE_DM, NULL,
                                          label, sizeof(label), NULL, 0,

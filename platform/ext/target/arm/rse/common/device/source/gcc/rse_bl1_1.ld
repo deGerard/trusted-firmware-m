@@ -18,7 +18,7 @@
 ; */
 
 /* Linker script to configure memory regions. */
-/* This file will be run trough the pre-processor. */
+/* This file will be run through the pre-processor. */
 
 #include "region_defs.h"
 
@@ -29,8 +29,8 @@ MEMORY
     RAM    (rwx) : ORIGIN = BL1_1_DATA_START, LENGTH = BL1_1_DATA_SIZE
 }
 
-__heap_size__  = BL1_1_HEAP_SIZE;
-__msp_stack_size__ = BL1_1_MSP_STACK_SIZE;
+__heap_size__  = BL1_HEAP_SIZE;
+__msp_stack_size__ = BL1_MSP_STACK_SIZE;
 
 ENTRY(Reset_Handler)
 
@@ -113,6 +113,8 @@ SECTIONS
         KEEP(*(.eh_frame*))
     } > FLASH
 
+    __bl1_1_text_size = SIZEOF(.text);
+
     .ARM.extab :
     {
         *(.ARM.extab* .gnu.linkonce.armextab.*)
@@ -125,8 +127,6 @@ SECTIONS
     } > FLASH
     __exidx_end = .;
 
-    __etext = ALIGN(4);
-
     .tfm_bl2_shared_data : ALIGN(32)
     {
         . += BOOT_TFM_SHARED_DATA_SIZE;
@@ -134,9 +134,11 @@ SECTIONS
     Image$$SHARED_DATA$$RW$$Base = ADDR(.tfm_bl2_shared_data);
     Image$$SHARED_DATA$$RW$$Limit = ADDR(.tfm_bl2_shared_data) + SIZEOF(.tfm_bl2_shared_data);
 
+    PROVIDE(__etext = LOADADDR(.data));
+
     . = BL1_1_DATA_START;
     Image$$BL1_1_ER_DATA_START$$Base = .;
-    .data : AT (__etext)
+    .data : ALIGN(4)
     {
         __data_start__ = .;
         __got_start__ = .;
@@ -153,7 +155,7 @@ SECTIONS
         /* All data end */
         __data_end__ = .;
 
-    } > RAM
+    } > RAM AT> FLASH
     Image$$ER_DATA$$Base = ADDR(.data);
 
     .bss :

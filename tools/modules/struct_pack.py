@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 #-------------------------------------------------------------------------------
 # SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
 #
@@ -9,7 +8,7 @@
 import struct
 
 import logging
-logger = logging.getLogger("TF-M")
+logger = logging.getLogger("TF-M.{}".format(__name__))
 
 def struct_pack(objects, pad_to=0):
     defstring = "<"

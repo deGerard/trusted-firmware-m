@@ -18,13 +18,13 @@
 ; */
 
 /* Linker script to configure memory regions. */
-/* This file will be run trough the pre-processor. */
+/* This file will be run through the pre-processor. */
 
 #include "region_defs.h"
 
 MEMORY
 {
-    CODE (rx) : ORIGIN = PROVISIONING_BUNDLE_CODE_START, LENGTH = PROVISIONING_BUNDLE_CODE_SIZE
+    CODE (rx) : ORIGIN = PROVISIONING_BUNDLE_CODE_START, LENGTH = MAIN_BUNDLE_CODE_SIZE
     DATA (rw) : ORIGIN = PROVISIONING_BUNDLE_DATA_START, LENGTH = PROVISIONING_BUNDLE_DATA_SIZE
     VALUES (r) : ORIGIN = PROVISIONING_BUNDLE_VALUES_START, LENGTH = PROVISIONING_BUNDLE_VALUES_SIZE
 }

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 #-------------------------------------------------------------------------------
 # SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
 #
@@ -8,7 +7,7 @@
 
 from cryptography.hazmat.primitives.serialization import load_pem_private_key, Encoding, PublicFormat
 import logging
-logger = logging.getLogger("TF-M")
+logger = logging.getLogger("TF-M.{}".format(__name__))
 from os.path import splitext, isfile
 
 def _load_bin(filepath):

@@ -45,8 +45,8 @@ endif()
 set(DEFAULT_MCUBOOT_SECURITY_COUNTERS       OFF          CACHE BOOL      "Whether to use the default security counter configuration defined by TF-M project")
 
 # LOG LEVEL
-set(TFM_SPM_LOG_LEVEL                   TFM_SPM_LOG_LEVEL_INFO          CACHE STRING    "Set default SPM log level as INFO level")
-set(TFM_PARTITION_LOG_LEVEL             TFM_PARTITION_LOG_LEVEL_INFO    CACHE STRING    "Set default Secure Partition log level as INFO level")
+set(TFM_SPM_LOG_LEVEL                   LOG_LEVEL_INFO          CACHE STRING    "Set default SPM log level as INFO level")
+set(TFM_PARTITION_LOG_LEVEL             LOG_LEVEL_INFO          CACHE STRING    "Set default Secure Partition log level as INFO level")
 
 # Partition
 set(TFM_PARTITION_PLATFORM              ON          CACHE BOOL      "Enable Platform partition")
@@ -55,7 +55,6 @@ set(TFM_PARTITION_CRYPTO                ON          CACHE BOOL      "Enable Cryp
 set(TFM_PARTITION_INITIAL_ATTESTATION   ON          CACHE BOOL      "Enable Initial Attestation partition")
 set(TFM_PARTITION_INTERNAL_TRUSTED_STORAGE ON       CACHE BOOL      "Enable Internal Trusted Storage partition")
 
-
 if (${CMAKE_BUILD_TYPE} STREQUAL Debug OR ${CMAKE_BUILD_TYPE} STREQUAL RelWithDebInfo)
   set(ENABLE_FWU_AGENT_DEBUG_LOGS     TRUE          CACHE BOOL      "Enable Firmware update agent debug logs.")
   set(PLAT_LOG_LEVEL                    4           CACHE STRING    "Set platform log level.")
@@ -63,6 +62,8 @@ else()
   set(ENABLE_FWU_AGENT_DEBUG_LOGS     FALSE         CACHE BOOL      "Enable Firmware update agent debug logs.")
   set(PLAT_LOG_LEVEL                    0           CACHE STRING    "Set platform log level.")
 endif()
+
+set(TFM_DEBUG_OPTIMISATION              ON         CACHE BOOL      "Add basic -Og optimisation when CMAKE_BUILD_TYPE is Debug. Note that non Debug builds specify their own optimisation")
 
 # Platform-specific configurations
 set(CONFIG_TFM_USE_TRUSTZONE            OFF)
@@ -73,3 +74,4 @@ set(MCUBOOT_USE_PSA_CRYPTO            ON               CACHE BOOL      "Enable t
 set(MCUBOOT_SIGNATURE_TYPE            "EC-P256"        CACHE STRING    "Algorithm to use for signature validation [RSA-2048, RSA-3072, EC-P256, EC-P384]")
 set(MCUBOOT_HW_KEY                    OFF              CACHE BOOL      "Whether to embed the entire public key in the image metadata instead of the hash only")
 set(MCUBOOT_BUILTIN_KEY               ON               CACHE BOOL      "Use builtin key(s) for validation, no public key data is embedded into the image metadata")
+set(CONFIG_BOOT_RAM_LOAD              ON               CACHE BOOL      "Whether to enable RAM load support")

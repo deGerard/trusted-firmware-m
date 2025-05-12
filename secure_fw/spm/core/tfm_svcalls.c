@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -36,8 +36,6 @@ extern int32_t platform_svc_handlers(uint8_t svc_number,
 #endif
 
 #if TFM_ISOLATION_LEVEL > 1
-
-extern uintptr_t spm_boundary;
 
 /*
  * TODO: To be updated after secure context management is going to implemented.
@@ -87,7 +85,7 @@ static uint32_t thread_mode_spm_return(uint32_t result)
     const struct partition_t *p_part_next = GET_CURRENT_COMPONENT();
     struct tfm_state_context_t *p_tctx = (struct tfm_state_context_t *)saved_psp;
 
-    FIH_CALL(tfm_hal_boundary_need_switch, fih_bool, spm_boundary, p_part_next->boundary);
+    FIH_CALL(tfm_hal_boundary_need_switch, fih_bool, get_spm_boundary(), p_part_next->boundary);
     if (fih_not_eq(fih_bool, fih_int_encode(false))) {
         FIH_CALL(tfm_hal_activate_boundary, fih_rc,
                  p_part_next->p_ldinf, p_part_next->boundary);
@@ -156,14 +154,14 @@ static int32_t prepare_to_thread_mode_spm(uint8_t svc_number, uint32_t *ctx, uin
     }
 
     if (svc_idx >= (sizeof(psa_api_svc_func_table)/sizeof(psa_api_svc_func_t))) {
-        SPMLOG_ERRMSGVAL("Invalid PSA API SVC requested: ", svc_number);
+        ERROR_RAW("Invalid PSA API SVC requested: 0x%08x\n", svc_number);
         ctx[0] = (uint32_t)PSA_ERROR_GENERIC_ERROR;
         return exc_return;
     }
 
     svc_func = psa_api_svc_func_table[svc_idx];
     if (!svc_func) {
-        SPMLOG_ERRMSGVAL("Corresponding SVC function is not included for number ", svc_number);
+        ERROR_RAW("Corresponding SVC function is not included for number 0x%08x\n", svc_number);
         ctx[0] = (uint32_t)PSA_ERROR_GENERIC_ERROR;
         return exc_return;
     }
@@ -171,9 +169,9 @@ static int32_t prepare_to_thread_mode_spm(uint8_t svc_number, uint32_t *ctx, uin
     saved_exc_return = exc_return;
 
     p_curr_sp = GET_CURRENT_COMPONENT();
-    FIH_CALL(tfm_hal_boundary_need_switch, fih_bool, p_curr_sp->boundary, spm_boundary);
+    FIH_CALL(tfm_hal_boundary_need_switch, fih_bool, p_curr_sp->boundary, get_spm_boundary());
     if (fih_not_eq(fih_bool, fih_int_encode(false))) {
-        FIH_CALL(tfm_hal_activate_boundary, fih_rc, NULL, spm_boundary);
+        FIH_CALL(tfm_hal_activate_boundary, fih_rc, NULL, get_spm_boundary());
         if (fih_not_eq(fih_rc, fih_int_encode(TFM_HAL_SUCCESS))) {
             tfm_core_panic();
         }
@@ -240,7 +238,7 @@ static uint32_t handle_spm_svc_requests(uint32_t svc_number, uint32_t exc_return
         break;
 #endif
     default:
-        SPMLOG_ERRMSGVAL("Unknown SPM SVC requested: ", svc_number);
+        ERROR_RAW("Unknown SPM SVC requested: 0x%08x\n", svc_number);
         svc_args[0] = (uint32_t)PSA_ERROR_GENERIC_ERROR;
     }
 
@@ -305,7 +303,7 @@ uint32_t spm_svc_handler(uint32_t *msp, uint32_t exc_return, uint32_t *psp)
     }
 #endif
 
-    SPMLOG_ERRMSGVAL("Unknown SVC number requested: ", svc_number);
+    ERROR_RAW("Unknown SVC number requested: 0x%08x\n", svc_number);
     svc_args[0] = (uint32_t)PSA_ERROR_GENERIC_ERROR;
 
     return exc_return;

@@ -35,12 +35,14 @@ target_compile_definitions(platform_region_defs
         $<$<BOOL:${RSE_USE_HOST_FLASH}>:RSE_USE_HOST_FLASH>
         $<$<BOOL:${RSE_GPT_SUPPORT}>:RSE_GPT_SUPPORT>
         $<$<BOOL:${RSE_HAS_EXPANSION_PERIPHERALS}>:RSE_HAS_EXPANSION_PERIPHERALS>
+        $<$<BOOL:${RSE_HAS_DCSU}>:RSE_HAS_DCSU>
         $<$<BOOL:${PLATFORM_HAS_PS_NV_OTP_COUNTERS}>:PLATFORM_HAS_PS_NV_OTP_COUNTERS>
         $<$<BOOL:${PLATFORM_ERROR_CODES}>:PLATFORM_ERROR_CODES>
         $<$<BOOL:${RSE_ENABLE_BRINGUP_HELPERS}>:RSE_ENABLE_BRINGUP_HELPERS>
         $<$<BOOL:${RSE_OTP_TRNG}>:RSE_OTP_TRNG>
         $<$<BOOL:${RSE_LOAD_NS_IMAGE}>:RSE_LOAD_NS_IMAGE>
         $<$<BOOL:${RSE_BIT_PROGRAMMABLE_OTP}>:RSE_BIT_PROGRAMMABLE_OTP>
+        $<$<BOOL:${RSE_USE_OTP_EMULATION_IN_SRAM}>:RSE_USE_OTP_EMULATION_IN_SRAM>
         $<$<BOOL:${RSE_USE_ROM_LIB_FROM_SRAM}>:RSE_USE_ROM_LIB_FROM_SRAM>
         $<$<BOOL:${RSE_SUPPORT_ROM_LIB_RELOCATION}>:RSE_SUPPORT_ROM_LIB_RELOCATION>
         RSE_AMOUNT=${RSE_AMOUNT}
@@ -63,6 +65,8 @@ target_compile_definitions(platform_region_defs
         $<$<BOOL:${RSE_PROVISIONING_ENABLE_AES_SIGNATURES}>:RSE_PROVISIONING_ENABLE_AES_SIGNATURES>
         $<$<BOOL:${RSE_PROVISIONING_CM_DEBUG_CLOSED}>:RSE_PROVISIONING_CM_DEBUG_CLOSED>
         $<$<BOOL:${RSE_PROVISIONING_REQUIRE_AUTHENTICATION_FOR_TCI}>:RSE_PROVISIONING_REQUIRE_AUTHENTICATION_FOR_TCI>
+        $<$<BOOL:${RSE_BOOT_IN_DM_LCS}>:RSE_BOOT_IN_DM_LCS>
+        $<$<BOOL:${RSE_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG}>:RSE_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG=RSE_ROTPK_HASH_ALG_${RSE_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG}>
 )
 
 #========================= Platform common defs ===============================#
@@ -140,17 +144,11 @@ if (RSE_BL1_TEST_BINARY)
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/tests/rse_test_executable rse_test_executable)
 endif()
 
-# Set which PLATFORM depedency must be used by the CC3XX driver
+# Set which PLATFORM dependency must be used by the CC3XX driver
 set(CC3XX_PLATFORM_INTERFACE platform_bl1_1)
 set(CC3XX_TARGET_PREFIX bl1_)
-# BL1 code size is dimensioned for production hence we can't afford
-# the variability required by building with different build type:
-# Force the usage of RelWithDebInfo for the crypto driver regardless
-# of the specified build option
-set(SAVED_BUILD_TYPE ${CMAKE_BUILD_TYPE})
-set(CMAKE_BUILD_TYPE "RelWithDebInfo")
+
 add_subdirectory(${PLATFORM_DIR}/ext/target/arm/drivers/cc3xx cc3xx)
-set(CMAKE_BUILD_TYPE ${SAVED_BUILD_TYPE})
 
 target_include_directories(platform_s
     PUBLIC
@@ -186,6 +184,8 @@ target_include_directories(platform_s
         ${PLATFORM_DIR}/ext/target/arm/drivers/cc3xx/low_level_driver/include
         ${PLATFORM_DIR}/ext/target/arm/drivers/cc3xx/common
         soft_crc
+        ${PLATFORM_DIR}/ext/target/arm/drivers/dcsu/include
+        ${PLATFORM_DIR}/ext/target/arm/drivers/dcsu/default_config
 )
 
 target_sources(platform_s
@@ -224,7 +224,7 @@ target_sources(platform_s
         nv_counters.c
         $<$<BOOL:${RSE_SUBPLATFORM_PAL_DEFAULT_ROTPK}>:${CMAKE_CURRENT_SOURCE_DIR}/rse_rotpk_mapping.c>
         $<$<BOOL:${RSE_SUBPLATFORM_PAL_DEFAULT_NV_COUNTERS}>:${CMAKE_CURRENT_SOURCE_DIR}/rse_nv_counter_mapping.c>
-        attest_hal.c
+        $<$<BOOL:${TFM_PARTITION_INITIAL_ATTESTATION}>:${CMAKE_CURRENT_SOURCE_DIR}/attest_hal.c>
         tfm_hal_platform_reset.c
         $<$<BOOL:${PLATFORM_SVC_HANDLERS}>:${CMAKE_CURRENT_SOURCE_DIR}/platform_svc_handler.c>
         $<$<BOOL:${PLATFORM_SVC_HANDLERS}>:${PLATFORM_DIR}/ext/target/arm/drivers/dma/dma350/dma350_checker_layer.c>
@@ -240,11 +240,10 @@ target_sources(platform_s
         $<$<BOOL:${PLATFORM_PSA_ADAC_SECURE_DEBUG}>:${CMAKE_CURRENT_SOURCE_DIR}/rse_debug_after_reset.c>
         ./rse_permanently_disable_device.c
         ./rse_zero_count.c
-)
-
-target_link_libraries(platform_s
-    PRIVATE
-        tfm_sprt # For tfm_strnlen in attest HAL
+        ./rse_persistent_data.c
+        ./dpa_hardened_word_copy.c
+        $<$<BOOL:${RSE_HAS_DCSU}>:${PLATFORM_DIR}/ext/target/arm/drivers/dcsu/src/dcsu_drv.c>
+        $<$<BOOL:${RSE_HAS_DCSU}>:${CMAKE_CURRENT_SOURCE_DIR}/rse_dcsu_hal.c>
 )
 
 target_sources(tfm_sprt
@@ -284,6 +283,17 @@ if (TFM_PARTITION_SCMI_COMMS)
         INTERFACE
             scmi/scmi_hal.c
             ${PLATFORM_DIR}/ext/common/scmi_hal_common.c
+    )
+endif()
+
+#=============== Runtime provisioning hardware abstraction layer ==============#
+
+if (TFM_PARTITION_RUNTIME_PROVISIONING)
+    add_library(runtime_provisioning_hal INTERFACE)
+
+    target_sources(runtime_provisioning_hal
+        INTERFACE
+            provisioning/runtime_provisioning_partition_hal.c
     )
 endif()
 
@@ -349,6 +359,8 @@ target_sources(platform_bl2
         $<$<BOOL:${RSE_BL2_ENABLE_IMAGE_STAGING}>:${CMAKE_CURRENT_SOURCE_DIR}/cmsis_drivers/Driver_Flash_memcpy.c>
         ./rse_permanently_disable_device.c
         ./rse_zero_count.c
+        ./cc3xx/cc3xx_aes_external_key_loader.c
+        ./dpa_hardened_word_copy.c
 )
 
 target_include_directories(platform_bl2
@@ -379,6 +391,8 @@ target_include_directories(platform_bl2
         ${PLATFORM_DIR}/ext/target/arm/drivers/kmu
         ${PLATFORM_DIR}/ext/target/arm/drivers/lcm
         ${PLATFORM_DIR}/ext/target/arm/drivers/gpio/pl061
+        ${PLATFORM_DIR}/ext/target/arm/drivers/dcsu/include
+        ${PLATFORM_DIR}/ext/target/arm/drivers/dcsu/default_config
         ./bringup_helpers
         ./cc3xx
         bl2/cc3xx
@@ -443,12 +457,13 @@ target_sources(platform_bl1_1
         ./cc3xx/cc3xx_aes_external_key_loader.c
         $<$<BOOL:${RSE_ENABLE_BRINGUP_HELPERS}>:${CMAKE_CURRENT_SOURCE_DIR}/bringup_helpers/rse_bringup_helpers.c>
         ./bl1/rse_kmu_keys.c
+        $<$<BOOL:${TFM_BL1_FIH_ENABLE}>:${CMAKE_CURRENT_SOURCE_DIR}/bl1/rse_fih.c>
         ./rse_boot_state.c
         ${PLATFORM_DIR}/ext/target/arm/drivers/gpio/pl061/gpio_pl061_drv.c
         ./platform_fatal_error.c
         $<$<NOT:$<BOOL:${TFM_BL1_SOFTWARE_CRYPTO}>>:${CMAKE_CURRENT_SOURCE_DIR}/bl1/cc3xx/cc3xx_rom_crypto.c>
-        $<$<NOT:$<BOOL:${TFM_BL1_DUMMY_TRNG}>>:${CMAKE_CURRENT_SOURCE_DIR}/bl1/cc3xx/cc3xx_rom_trng.c>
-        $<$<AND:$<BOOL:${RSE_OTP_TRNG}>,$<NOT:$<BOOL:${TFM_BL1_DUMMY_TRNG}>>>:${CMAKE_CURRENT_SOURCE_DIR}/rse_trng.c>
+        ${CMAKE_CURRENT_SOURCE_DIR}/bl1/cc3xx/cc3xx_rom_trng.c
+        $<$<BOOL:${RSE_OTP_TRNG}>:${CMAKE_CURRENT_SOURCE_DIR}/rse_trng.c>
         ${PLATFORM_DIR}/ext/target/arm/drivers/sam/sam_drv.c
         ./rse_sam_config.c
         ./rse_attack_tracking_counter.c
@@ -459,6 +474,9 @@ target_sources(platform_bl1_1
         ./bl1/bl1_1_debug.c
         ./rse_permanently_disable_device.c
         ./rse_zero_count.c
+        ./rse_persistent_data.c
+        $<$<BOOL:${RSE_HAS_DCSU}>:${PLATFORM_DIR}/ext/target/arm/drivers/dcsu/src/dcsu_drv.c>
+        $<$<BOOL:${RSE_HAS_DCSU}>:${CMAKE_CURRENT_SOURCE_DIR}/rse_dcsu_hal.c>
 )
 
 target_compile_definitions(platform_bl1_1
@@ -487,6 +505,8 @@ target_include_directories(platform_bl1_1_interface
         ${PLATFORM_DIR}/ext/target/arm/drivers/cc3xx/low_level_driver/include
         ${PLATFORM_DIR}/ext/target/arm/drivers/cc3xx/common
         ${PLATFORM_DIR}/ext/target/arm/drivers/gpio/pl061
+        ${PLATFORM_DIR}/ext/target/arm/drivers/dcsu/include
+        ${PLATFORM_DIR}/ext/target/arm/drivers/dcsu/default_config
         ./bringup_helpers
         ./cc3xx
         ./bl1/cc3xx
@@ -509,8 +529,7 @@ target_link_libraries(platform_bl1_1
 )
 
 if(RSE_SUPPORT_ROM_LIB_RELOCATION)
-    target_compile_options(platform_bl1_1
-        PUBLIC
+    set(ROM_LIB_RELOCATION_COMPILE_FLAGS
             # Enable position independent code
             -fpic
             # Tell the compiler that it can't assume the offset between the data
@@ -524,6 +543,29 @@ if(RSE_SUPPORT_ROM_LIB_RELOCATION)
             # address of the GOT, and that it doesn't need to try to set r9
             # itself (we do it in the initial setup).
             -msingle-pic-base
+            # Force function calls through the GOT instead of short-range
+            # BL instructions
+            -mlong-calls
+    )
+
+    target_compile_options(platform_bl1_1
+        PUBLIC
+            ${ROM_LIB_RELOCATION_COMPILE_FLAGS}
+    )
+
+    target_compile_options(bl1_1_crypto_mbedcrypto
+        PRIVATE
+            ${ROM_LIB_RELOCATION_COMPILE_FLAGS}
+    )
+
+    target_compile_options(bl1_1_crypto_mbedtls
+        PRIVATE
+            ${ROM_LIB_RELOCATION_COMPILE_FLAGS}
+    )
+
+    target_compile_options(bl1_1_crypto_mbedx509
+        PRIVATE
+            ${ROM_LIB_RELOCATION_COMPILE_FLAGS}
     )
 endif()
 
@@ -542,8 +584,8 @@ endif()
 target_sources(bl1_1_shared_lib
     PRIVATE
         $<$<NOT:$<BOOL:${TFM_BL1_SOFTWARE_CRYPTO}>>:${CMAKE_CURRENT_SOURCE_DIR}/bl1/cc3xx/cc3xx_rom_crypto.c>
-        $<$<AND:$<NOT:$<BOOL:${RSE_OTP_TRNG}>>,$<NOT:$<BOOL:${TFM_BL1_DUMMY_TRNG}>>>:${CMAKE_CURRENT_SOURCE_DIR}/bl1/cc3xx/cc3xx_rom_trng.c>
-        $<$<AND:$<BOOL:${RSE_OTP_TRNG}>,$<NOT:$<BOOL:${TFM_BL1_DUMMY_TRNG}>>>:${CMAKE_CURRENT_SOURCE_DIR}/rse_trng.c>
+        $<$<NOT:$<BOOL:${RSE_OTP_TRNG}>>:${CMAKE_CURRENT_SOURCE_DIR}/bl1/cc3xx/cc3xx_rom_trng.c>
+        $<$<BOOL:${RSE_OTP_TRNG}>:${CMAKE_CURRENT_SOURCE_DIR}/rse_trng.c>
 )
 
 target_sources(bl1_1
@@ -560,13 +602,10 @@ target_sources(platform_bl1_2
         ./bl1/boot_hal_bl1_2.c
         ${PLATFORM_DIR}/ext/target/arm/drivers/mpu/armv8m/mpu_armv8m_drv.c
         ./bl1/bl1_2_debug.c
-        ${PLATFORM_DIR}/ext/target/arm/drivers/lcm/lcm_drv.c
         ./sam_interrupts.c
 )
 
-if (RSE_AMOUNT GREATER 1)
-    target_sources(platform_bl1_2 PRIVATE ./otp_lcm.c)
-endif()
+add_dependencies(platform_bl1_2 bl1_1_shared_symbols)
 
 target_include_directories(platform_bl1_2
     PRIVATE
@@ -575,6 +614,8 @@ target_include_directories(platform_bl1_2
         ${PLATFORM_DIR}/ext/target/arm/drivers/dma/dma350
         ${PLATFORM_DIR}/ext/target/arm/drivers/kmu
         ${PLATFORM_DIR}/ext/target/arm/drivers/lcm
+        ${PLATFORM_DIR}/ext/target/arm/drivers/dcsu/include
+        ${PLATFORM_DIR}/ext/target/arm/drivers/dcsu/default_config
         ./tests/rse_test_executable
 )
 
@@ -660,11 +701,13 @@ if (RSE_XIP)
     )
 
     add_custom_target(tfm_s_sic_tables
-        SOURCES bin/tfm_s_sic_tables.bin
+        SOURCES tfm_s_sic_tables.bin
     )
 
-    add_custom_command(OUTPUT bin/tfm_s_sic_tables.bin
+    add_custom_command(OUTPUT tfm_s_sic_tables.bin
+        OUTPUT tfm_s_encrypted.bin
         DEPENDS tfm_s_bin
+        DEPENDS ${CMAKE_BINARY_DIR}/bin/bl1_2_padded_hash.bin
         COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${CMAKE_SOURCE_DIR}/tools/modules
         ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/bl2/create_xip_tables.py
             --input_image $<TARGET_FILE_DIR:tfm_s>/tfm_s.bin
@@ -700,10 +743,7 @@ if (RSE_XIP)
             platform_bl2
     )
 
-    add_custom_target(tfm_s_sic_tables_signed_bin
-        SOURCES bin/tfm_s_sic_tables_signed.bin
-    )
-    add_custom_command(OUTPUT bin/tfm_s_sic_tables_signed.bin
+    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tfm_s_sic_tables_signed.bin
         DEPENDS tfm_s_sic_tables
         DEPENDS tfm_s_bin signing_layout_s
         WORKING_DIRECTORY ${MCUBOOT_PATH}/scripts
@@ -731,7 +771,7 @@ if (RSE_XIP)
 
     add_custom_target(signed_images
         ALL
-        DEPENDS bin/tfm_s_sic_tables_signed.bin
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/tfm_s_sic_tables_signed.bin
     )
 
     set(IMAGE_TYPE "NS_IMAGE")
@@ -764,7 +804,7 @@ if (RSE_XIP)
     install(FILES ${MCUBOOT_KEY_NS}
             RENAME image_ns_signing_private_key.pem
             DESTINATION ${INSTALL_IMAGE_SIGNING_DIR}/keys/)
-    install(FILES $<TARGET_FILE_DIR:bl2>/image_ns_signing_public_key.pem
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/image_ns_signing_public_key.pem
             DESTINATION ${INSTALL_IMAGE_SIGNING_DIR}/keys)
 
     if (MCUBOOT_ENC_IMAGES)
@@ -896,6 +936,10 @@ install(DIRECTORY   partition
 
 install(DIRECTORY   ${RSE_SUBPLATFORM_PAL_CONFIG_DIR}/
         DESTINATION ${INSTALL_PLATFORM_NS_DIR}/subplatform_pal_config
+)
+
+install(DIRECTORY   ${BL1_1_CONFIG_DIR}/
+        DESTINATION ${INSTALL_PLATFORM_NS_DIR}/bl1_1_config
 )
 
 install(DIRECTORY   ${BL1_2_CONFIG_DIR}/

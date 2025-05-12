@@ -80,18 +80,19 @@ static cc3xx_err_t setup_dfa_countermeasures(void)
     uint32_t lock_dfa_enabled = false;
 #endif
 
-#ifdef CC3XX_CONFIG_AES_TUNNELLING_ENABLE
-    /* If tunnelling is enabled then the DFA countermeasures will need to be
-     * switched off while it is in use. Because of this, FORCE_DFA_ENABLE needs
-     * to be switched off.
-     */
-    lock_dfa_enabled = false;
-#endif /* CC3XX_CONFIG_AES_TUNNELLING_ENABLE */
-
+#ifndef CC3XX_CONFIG_AES_TUNNELLING_ENABLE
     /* If the AES DFA countermeasures are supported, enable them. */
     if (lock_dfa_enabled) {
         P_CC3XX->ao.host_ao_lock_bits |= 0b1U << 7; /* Set HOST_FORCE_DFA_ENABLE */
     } else {
+#else
+    /* If tunnelling is enabled then the DFA countermeasures will need to be
+     * switched off while it is in use. Because of this, FORCE_DFA_ENABLE needs
+     * to be switched off.
+     */
+    {
+    (void)lock_dfa_enabled;
+#endif /* CC3XX_CONFIG_AES_TUNNELLING_ENABLE */
         P_CC3XX->ao.host_ao_lock_bits &= ~(0b1U << 7); /* Unset HOST_FORCE_DFA_ENABLE */
     }
     P_CC3XX->ao.host_ao_lock_bits |= 0b1U << 8; /* Set HOST_DFA_ENABLE_LOCK */
@@ -109,9 +110,9 @@ static cc3xx_err_t setup_dpa_countermeasures(void)
     switch (P_CC3XX->id.peripheral_id_0) {
     case 0xC1:
         P_CC3XX->aes.aes_dummy_rounds_enable = 0x1;
-        while(!P_CC3XX->aes.aes_rbg_seeding_rdy){}
+        while (!P_CC3XX->aes.aes_rbg_seeding_rdy) {}
         err = cc3xx_lowlevel_rng_get_random((uint8_t *)&aes_rbg_seed, 1,
-                                            CC3XX_RNG_CRYPTOGRAPHICALLY_SECURE);
+                                            CC3XX_RNG_DRBG);
         if (err != CC3XX_ERR_SUCCESS) {
             return err;
         }
@@ -134,6 +135,17 @@ cc3xx_err_t cc3xx_lowlevel_init(void)
     /* Configure entire system to little endian */
     P_CC3XX->host_rgf.host_rgf_endian = 0x0U;
 
+    /* Set the AHB to issue secure, privileged data access transactions */
+    P_CC3XX->ahb.ahbm_hprot = 0b11U;
+    P_CC3XX->ahb.ahbm_hnonsec = 0b00U;
+
+    /* Set AHB transactions to Burst INCR4 by default */
+    P_CC3XX->ahb.ahbm_singles = 0x0UL;
+
+    /* Reset engine to PASSTHROUGH / None */
+    cc3xx_engine_in_use = CC3XX_ENGINE_NONE;
+    P_CC3XX->cc_ctl.crypto_ctl = CC3XX_ENGINE_NONE;
+
     err = setup_dfa_countermeasures();
     if (err != CC3XX_ERR_SUCCESS) {
         return err;
@@ -145,13 +157,6 @@ cc3xx_err_t cc3xx_lowlevel_init(void)
         return err;
     }
 #endif /* CC3XX_CONFIG_DPA_MITIGATIONS_ENABLE */
-
-    /* Set AHB to secure */
-    P_CC3XX->ahb.ahbm_hnonsec = 0b00U;
-
-    /* Reset engine to PASSTHROUGH / None */
-    cc3xx_engine_in_use = CC3XX_ENGINE_NONE;
-    P_CC3XX->cc_ctl.crypto_ctl = CC3XX_ENGINE_NONE;
 
     return CC3XX_ERR_SUCCESS;
 }

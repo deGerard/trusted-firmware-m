@@ -18,7 +18,7 @@
 ; */
 
 /* Linker script to configure memory regions. */
-/* This file will be run trough the pre-processor. */
+/* This file will be run through the pre-processor. */
 
 #include "region_defs.h"
 
@@ -27,9 +27,6 @@ MEMORY
     FLASH (rx)  : ORIGIN = BL1_2_CODE_START, LENGTH = BL1_2_CODE_SIZE
     RAM   (rwx) : ORIGIN = BL1_2_DATA_START, LENGTH = BL1_2_DATA_SIZE
 }
-
-__heap_size__  = BL1_2_HEAP_SIZE;
-__msp_stack_size__ = BL1_2_MSP_STACK_SIZE;
 
 ENTRY(Reset_Handler)
 
@@ -124,8 +121,6 @@ SECTIONS
     } > FLASH
     __exidx_end = .;
 
-    __etext = ALIGN(4);
-
     .tfm_bl2_shared_data : ALIGN(32)
     {
         . += BOOT_TFM_SHARED_DATA_SIZE;
@@ -133,9 +128,11 @@ SECTIONS
     Image$$SHARED_DATA$$RW$$Base = ADDR(.tfm_bl2_shared_data);
     Image$$SHARED_DATA$$RW$$Limit = ADDR(.tfm_bl2_shared_data) + SIZEOF(.tfm_bl2_shared_data);
 
+    PROVIDE(__etext = LOADADDR(.data));
+
     . = BL1_2_DATA_START;
     Image$$BL1_2_ER_DATA_START$$Base = .;
-    .data : AT (__etext)
+    .data : ALIGN(4)
     {
         __data_start__ = .;
         *(vtable)
@@ -146,7 +143,7 @@ SECTIONS
         /* All data end */
         __data_end__ = .;
 
-    } > RAM
+    } > RAM AT> FLASH
     Image$$ER_DATA$$Base = ADDR(.data);
 
     .bss :
@@ -161,26 +158,10 @@ SECTIONS
 
     bss_size = __bss_end__ - __bss_start__;
 
-    .msp_stack : ALIGN(32)
-    {
-        . += __msp_stack_size__;
-    } > RAM
-    Image$$ARM_LIB_STACK$$ZI$$Base = ADDR(.msp_stack);
-    Image$$ARM_LIB_STACK$$ZI$$Limit = ADDR(.msp_stack) + SIZEOF(.msp_stack);
+    /* No stack or heap defined as BL1_2 uses the same stack and
+     * heap as BL1_1
+     */
 
-    .heap : ALIGN(8)
-    {
-        . = ALIGN(8);
-        __end__ = .;
-        PROVIDE(end = .);
-        __HeapBase = .;
-        . += __heap_size__;
-        __HeapLimit = .;
-        __heap_limit = .; /* Add for _sbrk */
-    } > RAM
-    Image$$ARM_LIB_HEAP$$ZI$$Limit = ADDR(.heap) + SIZEOF(.heap);
-
-    PROVIDE(__stack = Image$$ARM_LIB_STACK$$ZI$$Limit);
     Image$$BL1_2_ER_DATA_LIMIT$$Base = .;
 
     Image$$BL1_1_ER_DATA_START$$Base = BL1_1_DATA_START;

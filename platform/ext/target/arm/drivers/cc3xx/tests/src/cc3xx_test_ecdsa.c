@@ -3486,8 +3486,8 @@ int cc3xx_test_sign_verify(cc3xx_ecdsa_validate_test_data_t *data)
                            sig_r, sizeof(sig_r), &sig_r_size,
                            sig_s, sizeof(sig_s), &sig_s_size);
     uint32_t cyccnt_end = get_cycle_count();
-    printf("%s (%s) sign: %d cycles\r\n", curve_name, hash_name,
-                                          cyccnt_end - cyccnt_start);
+    TEST_LOG("%s (%s) sign: %d cycles\r\n", curve_name, hash_name,
+                                            cyccnt_end - cyccnt_start);
 
     cc3xx_test_assert(err == CC3XX_ERR_SUCCESS);
 
@@ -3500,7 +3500,7 @@ int cc3xx_test_sign_verify(cc3xx_ecdsa_validate_test_data_t *data)
                              sig_r, sig_r_size,
                              sig_s, sig_s_size);
     uint32_t cyccnt_end_2 = get_cycle_count();
-    printf("%s (%s%s) verify: %d cycles\r\n", curve_name, hash_name,
+    TEST_LOG("%s (%s%s) verify: %d cycles\r\n", curve_name, hash_name,
 #ifdef CC3XX_CONFIG_EC_SHAMIR_TRICK_ENABLE
                                               ", shamir",
 #else
@@ -3580,8 +3580,8 @@ int cc3xx_test_sign_timing(cc3xx_ecdsa_validate_test_data_t *data)
                                sig_r, sizeof(sig_r), &sig_r_size,
                                sig_s, sizeof(sig_s), &sig_s_size);
         uint32_t cyccnt_end = get_cycle_count();
-        printf("%s (%s) sign: %d cycles\r\n", curve_name, hash_name,
-                                              cyccnt_end - cyccnt_start);
+        TEST_LOG("%s (%s) sign: %d cycles\r\n", curve_name, hash_name,
+                                                cyccnt_end - cyccnt_start);
 
         cc3xx_test_assert(err == CC3XX_ERR_SUCCESS);
     }
@@ -3603,7 +3603,8 @@ static void swap_endianess(uint8_t *p, size_t len)
    }
 }
 
-int cc3xx_test_ecdsa_getpub(void)
+#if defined(CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE)
+static void ecdsa_getpub_tests(struct test_result_t *ret)
 {
     const cc3xx_ec_curve_id_t curve_id[] = {
         CC3XX_EC_CURVE_SECP_224_R1,
@@ -3617,7 +3618,6 @@ int cc3xx_test_ecdsa_getpub(void)
     uint32_t pub_y[CC3XX_EC_MAX_POINT_SIZE / sizeof(uint32_t)];
     size_t pub_x_len, pub_y_len;
     const char *curve_name = NULL;
-    int rc;
     int observed_mismatches = 0;
 
     for (size_t i = 0; i < ARRAY_SIZE(curve_id); i++) {
@@ -3668,11 +3668,11 @@ int cc3xx_test_ecdsa_getpub(void)
             swap_endianess((uint8_t *)priv_key, priv_size_in_bytes);
 
             /* Print the private key being tested */
-            printf("%s, priv: 0x", curve_name);
+            TEST_LOG("%s, priv: 0x", curve_name);
             for (int k = 0; k < priv_size_in_bytes; k++) {
-                printf("%02x", ((uint8_t *)priv_key)[k]);
+                TEST_LOG("%02x", ((uint8_t *)priv_key)[k]);
             }
-            printf("\r\n");
+            TEST_LOG("\r\n");
 
             /* Exercise the API */
             cc3xx_err_t err = cc3xx_lowlevel_ecdsa_getpub(
@@ -3682,7 +3682,7 @@ int cc3xx_test_ecdsa_getpub(void)
             case 0:
             case 3:
                 if (err != CC3XX_ERR_ECDSA_INVALID_KEY) {
-                    printf("%s case %d expected ECDSA_INVALID_KEY, returned %s\r\n",
+                    TEST_LOG("%s case %d expected ECDSA_INVALID_KEY, returned %s\r\n",
                                 curve_name, j, err < _ERROR_MAX ? get_err_name(err) : NULL);
                     observed_mismatches++;
                 }
@@ -3690,7 +3690,7 @@ int cc3xx_test_ecdsa_getpub(void)
             case 1:
             case 2:
                 if (err != CC3XX_ERR_SUCCESS) {
-                    printf("%s case %d expected SUCCESS, returned %s\r\n",
+                    TEST_LOG("%s case %d expected SUCCESS, returned %s\r\n",
                                 curve_name, j, err < _ERROR_MAX ? get_err_name(err) : NULL);
                     observed_mismatches++;
                 };
@@ -3698,76 +3698,77 @@ int cc3xx_test_ecdsa_getpub(void)
             }
 
             if (err == CC3XX_ERR_SUCCESS) {
-                printf("%s pub.x: 0x", curve_name);
+                TEST_LOG("%s pub.x: 0x", curve_name);
                 for (int k = 0; k < pub_x_len; k++) {
-                    printf("%02x", ((uint8_t *)pub_x)[k]);
+                    TEST_LOG("%02x", ((uint8_t *)pub_x)[k]);
                 }
-                printf("\r\n");
+                TEST_LOG("\r\n");
 
-                printf("%s pub.y: 0x", curve_name);
+                TEST_LOG("%s pub.y: 0x", curve_name);
                 for (int k = 0; k < pub_y_len; k++) {
-                    printf("%02x", ((uint8_t *)pub_y)[k]);
+                    TEST_LOG("%02x", ((uint8_t *)pub_y)[k]);
                 }
-                printf("\r\n");
+                TEST_LOG("\r\n");
             }
         }
-        printf("%s getpub test done\r\n", curve_name);
+        TEST_LOG("%s getpub test done\r\n", curve_name);
     }
 
-    cc3xx_test_assert(observed_mismatches == 0);
-
-    rc = 0;
-
-cleanup:
-    return rc;
-}
-
-static void ecdsa_tests_run(struct test_result_t *ret)
-{
-    for (int idx = 0; idx < sizeof(python_interop_test_data) / sizeof(python_interop_test_data[0]); idx++) {
-#if defined(CC3XX_CONFIG_ECDSA_VERIFY_ENABLE)
-        TEST_ASSERT(cc3xx_test_ecdsa_verify(&python_interop_test_data[idx]) == 0,
-                    "");
-#endif /* defined(CC3XX_CONFIG_ECDSA_VERIFY_ENABLE) */
-#if defined(CC3XX_CONFIG_ECDSA_SIGN_ENABLE) && defined(CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE)
-        TEST_ASSERT(cc3xx_test_sign_verify(&python_interop_test_data[idx]) == 0,
-                    "");
-        /* TEST_ASSERT(cc3xx_test_sign_timing(&cavp_validate_test_data[idx]) == 0, */
-        /*             ""); */
-#endif
-    }
-
-    for (int idx = 0; idx < sizeof(cavp_validate_test_data) / sizeof(cavp_validate_test_data[0]); idx++) {
-#if defined(CC3XX_CONFIG_ECDSA_VERIFY_ENABLE)
-        TEST_ASSERT(cc3xx_test_ecdsa_verify(&cavp_validate_test_data[idx]) == 0,
-                    "TEST_ECDSA_VERIFY failed");
-#endif /* CC3XX_CONFIG_ECDSA_VERIFY_ENABLE */
-#if defined(CC3XX_CONFIG_ECDSA_SIGN_ENABLE) && defined(CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE)
-        TEST_ASSERT(cc3xx_test_sign_verify(&cavp_validate_test_data[idx]) == 0,
-                    "TEST_SIGN_VERIFY failed");
-        /* TEST_ASSERT(cc3xx_test_sign_timing(&cavp_validate_test_data[idx]) == 0, */
-        /*             ""); */
-#endif /* CC3XX_CONFIG_ECDSA_SIGN_ENABLE && CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE */
-    }
-
-#if defined(CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE)
-    TEST_ASSERT(cc3xx_test_ecdsa_getpub() == 0,
-                "TEST_ECDSA_GETPUB failed");
-#endif /* CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE */
+    TEST_ASSERT(observed_mismatches == 0, "getpub failed");
 
     ret->val = TEST_PASSED;
-    return;
 }
+#endif /* CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE */
 
-static struct test_t ecdsa_tests = {
-    &ecdsa_tests_run,
-    "CC3XX_ECDSA_TEST",
-    "CC3XX ECDSA tests",
+#if defined(CC3XX_CONFIG_ECDSA_VERIFY_ENABLE)
+static void ecdsa_verify_tests(struct test_result_t *ret)
+{
+    for (int idx = 0; idx < ARRAY_SIZE(python_interop_test_data); idx++) {
+        TEST_ASSERT(cc3xx_test_ecdsa_verify(&python_interop_test_data[idx]) == 0,
+                        "Verification failed");
+    }
+}
+#endif /* defined(CC3XX_CONFIG_ECDSA_VERIFY_ENABLE) */
+
+#if defined(CC3XX_CONFIG_ECDSA_SIGN_ENABLE) && defined(CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE)
+static void ecdsa_sign_verify_tests(struct test_result_t *ret)
+{
+    for (int idx = 0; idx < ARRAY_SIZE(python_interop_test_data); idx++) {
+        TEST_ASSERT(cc3xx_test_sign_verify(&python_interop_test_data[idx]) == 0,
+                         "Sign verify failed");
+        /* TEST_ASSERT(cc3xx_test_sign_timing(&cavp_validate_test_data[idx]) == 0, */
+        /*             ""); */
+    }
+}
+#endif /* defined(CC3XX_CONFIG_ECDSA_SIGN_ENABLE) && defined(CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE) */
+
+static struct test_t ecdsa_tests[] = {
+#if defined(CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE)
+    {
+        &ecdsa_getpub_tests,
+        "CC3XX_ECDSA_GETPUB_TEST",
+        "CC3XX ECDSA getpub tests",
+    },
+#endif /* CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE */
+#if defined(CC3XX_CONFIG_ECDSA_VERIFY_ENABLE)
+    {
+        &ecdsa_verify_tests,
+        "CC3XX_ECDSA_VERIFY_TEST",
+        "CC3XX ECDSA verify tests",
+    },
+#endif /* defined(CC3XX_CONFIG_ECDSA_VERIFY_ENABLE) */
+#if defined(CC3XX_CONFIG_ECDSA_SIGN_ENABLE) && defined(CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE)
+    {
+        &ecdsa_sign_verify_tests,
+        "CC3XX_ECDSA_SIGN_VERIFY_TEST",
+        "CC3XX ECDSA sign verify tests",
+    },
+#endif /* defined(CC3XX_CONFIG_ECDSA_SIGN_ENABLE) && defined(CC3XX_CONFIG_ECDSA_KEYGEN_ENABLE) */
 };
 
 void add_cc3xx_ecdsa_tests_to_testsuite(struct test_suite_t *p_ts, uint32_t ts_size)
 {
     enable_cycle_counter();
 
-    cc3xx_add_tests_to_testsuite(&ecdsa_tests, 1, p_ts, ts_size);
+    cc3xx_add_tests_to_testsuite(ecdsa_tests, ARRAY_SIZE(ecdsa_tests), p_ts, ts_size);
 }

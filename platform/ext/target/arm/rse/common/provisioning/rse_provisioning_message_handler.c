@@ -5,6 +5,7 @@
  *
  */
 
+#include <assert.h>
 
 #include "rse_provisioning_message_handler.h"
 
@@ -19,19 +20,28 @@
 #include "crypto.h"
 #include "tfm_plat_otp.h"
 #include "rse_otp_dev.h"
+#include "rse_provisioning_comms.h"
 
 #include <string.h>
 
-static bool rse_debug_is_disabled(void)
+#ifdef TEST_BL1_1
+#define TEST_STATIC
+#define TEST_STATIC_INLINE
+#else
+#define TEST_STATIC static
+#define TEST_STATIC_INLINE static inline
+#endif
+
+static bool rse_debug_is_enabled(void)
 {
     enum lcm_error_t lcm_err;
     uint32_t dcu_values[LCM_DCU_WIDTH_IN_BYTES / sizeof(uint32_t)];
 
     lcm_err = lcm_dcu_get_enabled(&LCM_DEV_S, (uint8_t *)dcu_values);
     if (lcm_err != LCM_ERROR_NONE) {
-        FATAL_ERR(false);
+        FATAL_ERR(TFM_PLAT_ERR_PROVISIONING_DEBUG_DISABLED_CHECK_FAILED);
         /* Assume the least secure case if there is an error */
-        return false;
+        return true;
     }
 
     /* FIXME remove this once the FVP is fixed */
@@ -39,12 +49,13 @@ static bool rse_debug_is_disabled(void)
         return false;
     }
 
-    return (dcu_values[0] & 0x55555555) == 0;
+    return (dcu_values[0] & 0x55555555) != 0;
 }
 
 static bool rse_disable_debug_and_reset(void)
 {
     /* FixMe: Use the reset debug disable mechanism */
+    assert(false);
     return false;
 }
 
@@ -127,23 +138,8 @@ static inline bool is_blob_personalized(const struct rse_provisioning_message_bl
             == RSE_PROVISIONING_BLOB_TYPE_PERSONALIZED);
 }
 
-
-static enum tfm_plat_err_t disable_debug_before_running_blob(
-                            const struct rse_provisioning_message_blob_t *blob,
-                            enum lcm_lcs_t lcs, enum lcm_tp_mode_t tp_mode)
-{
-    if ((tp_mode != LCM_TP_MODE_VIRGIN) &&
-	((lcs == LCM_LCS_CM) || (lcs == LCM_LCS_DM)) &&
-	is_sp_mode_required_for_blob(blob)) {
-        return tfm_plat_otp_secure_provisioning_start();
-    } else {
-        /* FixMe: this has a bool return but the function returns tfm_plat_err_t */
-        return rse_disable_debug_and_reset();
-    }
-}
-
-static inline bool blob_needs_code_data_decryption(
-        const struct rse_provisioning_message_blob_t *blob)
+TEST_STATIC_INLINE bool
+blob_needs_code_data_decryption(const struct rse_provisioning_message_blob_t *blob)
 {
     enum rse_provisioning_blob_code_and_data_decryption_config_t decryption_config =
         (blob->metadata >> RSE_PROVISIONING_BLOB_DETAILS_CODE_DATA_DECRYPTION_OFFSET)
@@ -152,8 +148,8 @@ static inline bool blob_needs_code_data_decryption(
     return (decryption_config == RSE_PROVISIONING_BLOB_CODE_DATA_DECRYPTION_AES);
 }
 
-static inline bool blob_needs_secret_decryption(
-        const struct rse_provisioning_message_blob_t *blob)
+TEST_STATIC_INLINE bool
+blob_needs_secret_decryption(const struct rse_provisioning_message_blob_t *blob)
 {
     enum rse_provisioning_blob_secret_values_decryption_config_t decryption_config =
         (blob->metadata >> RSE_PROVISIONING_BLOB_DETAILS_SECRET_VALUES_DECRYPTION_OFFSET)
@@ -340,23 +336,6 @@ static enum tfm_plat_err_t aes_generic_blob_operation(cc3xx_aes_mode_t mode,
     return TFM_PLAT_ERR_SUCCESS;
 }
 
-static enum tfm_plat_err_t aes_decrypt_and_unpack_blob(const struct rse_provisioning_message_blob_t *blob,
-                                                        void *code_output, size_t code_output_size,
-                                                        void *data_output, size_t data_output_size,
-                                                        void *values_output, size_t values_output_size,
-                                                        setup_aes_key_func_t setup_aes_key)
-{
-    uint8_t iv[AES_IV_LEN] = {0};
-
-    memcpy(iv, (uint8_t*)blob->iv, sizeof(blob->iv));
-
-    return aes_generic_blob_operation(CC3XX_AES_MODE_CTR, blob, iv, AES_IV_LEN,
-                                      code_output, code_output_size,
-                                      data_output, data_output_size,
-                                      values_output, values_output_size,
-                                      setup_aes_key);
-}
-
 static enum tfm_plat_err_t aes_validate_and_unpack_blob(const struct rse_provisioning_message_blob_t *blob,
                                                         void *code_output, size_t code_output_size,
                                                         void *data_output, size_t data_output_size,
@@ -369,6 +348,24 @@ static enum tfm_plat_err_t aes_validate_and_unpack_blob(const struct rse_provisi
 
     return aes_generic_blob_operation(CC3XX_AES_MODE_CCM, blob,
                                       iv, 8,
+                                      code_output, code_output_size,
+                                      data_output, data_output_size,
+                                      values_output, values_output_size,
+                                      setup_aes_key);
+}
+
+#ifdef RSE_PROVISIONING_ENABLE_ECDSA_SIGNATURES
+static enum tfm_plat_err_t aes_decrypt_and_unpack_blob(const struct rse_provisioning_message_blob_t *blob,
+                                                        void *code_output, size_t code_output_size,
+                                                        void *data_output, size_t data_output_size,
+                                                        void *values_output, size_t values_output_size,
+                                                        setup_aes_key_func_t setup_aes_key)
+{
+    uint8_t iv[AES_IV_LEN] = {0};
+
+    memcpy(iv, (uint8_t*)blob->iv, sizeof(blob->iv));
+
+    return aes_generic_blob_operation(CC3XX_AES_MODE_CTR, blob, iv, AES_IV_LEN,
                                       code_output, code_output_size,
                                       data_output, data_output_size,
                                       values_output, values_output_size,
@@ -430,7 +427,7 @@ static enum tfm_plat_err_t ecdsa_validate_and_unpack_blob(const struct rse_provi
 {
     enum tfm_plat_err_t err;
     cc3xx_err_t cc_err;
-    uint32_t blob_hash[RSE_PROVISIONING_HASH_MAX_SIZE / sizeof(uint32_t)];
+    uint32_t blob_hash[RSE_PROVISIONING_HASH_SIZE / sizeof(uint32_t)];
     uint32_t *public_key_x;
     uint32_t *public_key_y;
     size_t public_key_x_size;
@@ -470,56 +467,23 @@ static enum tfm_plat_err_t ecdsa_validate_and_unpack_blob(const struct rse_provi
                                          (uint32_t *)(blob->signature + sig_point_len), sig_point_len);
     return cc_err;
 }
+#endif /* RSE_PROVISIONING_ENABLE_ECDSA_SIGNATURES */
 
-static enum tfm_plat_err_t ecdsa_validate_blob_without_unpacking(const struct rse_provisioning_message_blob_t *blob,
-                                                                 get_rotpk_func_t get_rotpk)
+TEST_STATIC enum tfm_plat_err_t
+validate_and_unpack_blob(const struct rse_provisioning_message_blob_t *blob, size_t msg_size,
+                         void *code_output, size_t code_output_size, void *data_output,
+                         size_t data_output_size, void *values_output, size_t values_output_size,
+                         setup_aes_key_func_t setup_aes_key, get_rotpk_func_t get_rotpk)
 {
-    enum tfm_plat_err_t err;
-    cc3xx_err_t cc_err;
-    uint32_t blob_hash[RSE_PROVISIONING_HASH_MAX_SIZE / sizeof(uint32_t)];
-    uint32_t *public_key_x;
-    uint32_t *public_key_y;
-    size_t public_key_x_size;
-    size_t public_key_y_size;
-    size_t sig_point_len = blob->signature_size / 2;
-    size_t hash_size;
-
-    err = hash_blob(blob,
-                    (uint8_t *)blob->code_and_data_and_secret_values, blob->code_size,
-                    (uint8_t *)blob->code_and_data_and_secret_values + blob->code_size, blob->data_size,
-                    (uint8_t *)blob->code_and_data_and_secret_values + blob->code_size + blob->data_size,
-                    blob->secret_values_size,
-                    (uint8_t *)blob_hash, sizeof(blob_hash), &hash_size);
-    if (err != TFM_PLAT_ERR_SUCCESS) {
-        return err;
-    }
-
-    err = get_rotpk(blob, &public_key_x, &public_key_x_size, &public_key_y, &public_key_y_size);
-    if (err != TFM_PLAT_ERR_SUCCESS) {
-        return err;
-    }
-
-    cc_err = cc3xx_lowlevel_ecdsa_verify(RSE_PROVISIONING_CURVE,
-                                         public_key_x, public_key_x_size,
-                                         public_key_y, public_key_y_size,
-                                         blob_hash, hash_size,
-                                         (uint32_t *)blob->signature, sig_point_len,
-                                         (uint32_t *)(blob->signature + sig_point_len), sig_point_len);
-    return cc_err;
-}
-
-static enum tfm_plat_err_t validate_and_unpack_blob(const struct rse_provisioning_message_blob_t *blob,
-                                                    size_t msg_size,
-                                                    void *code_output, size_t code_output_size,
-                                                    void *data_output, size_t data_output_size,
-                                                    void *values_output, size_t values_output_size,
-                                                    setup_aes_key_func_t setup_aes_key,
-                                                    get_rotpk_func_t get_rotpk)
-{
-    size_t blob_payload_size = blob->code_size + blob->data_size + blob->secret_values_size;
     enum rse_provisioning_blob_signature_config_t sig_config;
 
-    if (blob_payload_size > msg_size) {
+    /* Perform the size check stepwise in order to avoid the risk of underflowing
+     * and check that msg_size is the sum of code, data, secret_values sizes + header size
+     */
+    if (msg_size < sizeof(*blob)
+     || blob->code_size > msg_size - sizeof(*blob)
+     || blob->data_size > (msg_size - sizeof(*blob) - blob->code_size)
+     || blob->secret_values_size != (msg_size - sizeof(*blob) - blob->code_size - blob->data_size)) {
         FATAL_ERR(TFM_PLAT_ERR_PROVISIONING_BLOB_INVALID_SIZE);
         return TFM_PLAT_ERR_PROVISIONING_BLOB_INVALID_SIZE;
     }
@@ -569,6 +533,44 @@ static enum tfm_plat_err_t run_blob(void *code_ptr)
     return TFM_PLAT_ERR_SUCCESS;
 }
 
+enum tfm_plat_err_t
+blob_handling_status_report_continue(enum provisioning_message_report_step_t step)
+{
+    struct provisioning_message_status_report_t status_report = {
+        .type = PROVISIONING_STATUS_SUCCESS_CONTINUE,
+        .report_step = step,
+        .error_code = 0,
+    };
+
+    return provisioning_comms_send_status_blocking((uint32_t *)&status_report,
+                                                   sizeof(status_report));
+}
+
+enum tfm_plat_err_t blob_handling_status_report_error(enum provisioning_message_report_step_t step,
+                                                      uint32_t error)
+{
+    struct provisioning_message_status_report_t status_report = {
+        .type = PROVISIONING_STATUS_ERROR,
+        .report_step = step,
+        .error_code = error,
+    };
+
+    return provisioning_comms_send_status_blocking((uint32_t *)&status_report,
+                                                   sizeof(status_report));
+}
+
+enum tfm_plat_err_t blob_provisioning_finished(void)
+{
+    struct provisioning_message_status_report_t status_report = {
+        .type = PROVISIONING_STATUS_SUCCESS_COMPLETE,
+        .report_step = PROVISIONING_REPORT_STEP_RUN_BLOB,
+        .error_code = 0,
+    };
+
+    return provisioning_comms_send_status_blocking((uint32_t *)&status_report,
+                                                   sizeof(status_report));
+}
+
 enum tfm_plat_err_t default_blob_handler(const struct rse_provisioning_message_blob_t *blob,
                                          size_t msg_size, const void *ctx)
 {
@@ -581,7 +583,10 @@ enum tfm_plat_err_t default_blob_handler(const struct rse_provisioning_message_b
 
     struct default_blob_handler_ctx_t *blob_ctx = (struct default_blob_handler_ctx_t *)ctx;
 
-    lcm_get_tp_mode(&LCM_DEV_S, &tp_mode);
+    lcm_err = lcm_get_tp_mode(&LCM_DEV_S, &tp_mode);
+    if (lcm_err != LCM_ERROR_NONE) {
+        return (enum tfm_plat_err_t)lcm_err;
+    }
 
     lcm_err = lcm_get_lcs(&LCM_DEV_S, &lcs);
     if (lcm_err != LCM_ERROR_NONE) {
@@ -597,23 +602,33 @@ enum tfm_plat_err_t default_blob_handler(const struct rse_provisioning_message_b
         if (tp_mode == LCM_TP_MODE_VIRGIN && blob_tp_mode == LCM_TP_MODE_PCI) {
             lcm_err = lcm_set_tp_mode(&LCM_DEV_S, LCM_TP_MODE_PCI);
             if (lcm_err != LCM_ERROR_NONE) {
+                blob_handling_status_report_error(PROVISIONING_REPORT_STEP_SET_TP_MODE_PCI,
+                                                  lcm_err);
                 return (enum tfm_plat_err_t)lcm_err;
             }
+            blob_handling_status_report_continue(PROVISIONING_REPORT_STEP_SET_TP_MODE_PCI);
+#ifdef RSE_PROVISIONING_ISSUE_SELF_RESET
             tfm_hal_system_reset();
+#endif
         }
 
 #if !(defined(RSE_PROVISIONING_CM_DEBUG_CLOSED) && defined(RSE_PROVISIONING_REQUIRE_AUTHENTICATION_FOR_TCI))
         if (tp_mode == LCM_TP_MODE_VIRGIN && blob_tp_mode == LCM_TP_MODE_TCI) {
             lcm_err = lcm_set_tp_mode(&LCM_DEV_S, LCM_TP_MODE_TCI);
             if (lcm_err != LCM_ERROR_NONE) {
+                blob_handling_status_report_error(PROVISIONING_REPORT_STEP_SET_TP_MODE_TCI,
+                                                  lcm_err);
                 return (enum tfm_plat_err_t)lcm_err;
             }
+            blob_handling_status_report_continue(PROVISIONING_REPORT_STEP_SET_TP_MODE_TCI);
+#ifdef RSE_PROVISIONING_ISSUE_SELF_RESET
             tfm_hal_system_reset();
+#endif
         }
 #endif
 
-        FATAL_ERR(TFM_PLAT_ERR_PROVISINING_INVALID_TP_MODE);
-        return TFM_PLAT_ERR_PROVISINING_INVALID_TP_MODE;
+        FATAL_ERR(TFM_PLAT_ERR_PROVISIONING_INVALID_TP_MODE);
+        return TFM_PLAT_ERR_PROVISIONING_INVALID_TP_MODE;
     }
 
     err = is_blob_valid_for_lcs(blob, lcs);
@@ -621,16 +636,36 @@ enum tfm_plat_err_t default_blob_handler(const struct rse_provisioning_message_b
         return err;
     }
 
-    if (!rse_debug_is_disabled()) {
-        err = disable_debug_before_running_blob(blob, lcs, tp_mode);
+    lcm_err = lcm_get_sp_enabled(&LCM_DEV_S, &sp_mode_enabled);
+    if (lcm_err != LCM_ERROR_NONE) {
+        return (enum tfm_plat_err_t)lcm_err;
+    }
+
+    if (is_sp_mode_required_for_blob(blob) && (sp_mode_enabled == LCM_FALSE)) {
+        err = tfm_plat_otp_secure_provisioning_start();
         if (err != TFM_PLAT_ERR_SUCCESS) {
             return err;
         }
 
-        tfm_hal_system_reset();
+        /* This function returning (and not resetting) is an error */
+        FATAL_ERR(TFM_PLAT_ERR_PROVISIONING_START_FAILED);
+        return TFM_PLAT_ERR_PROVISIONING_START_FAILED;
+    } else if (rse_debug_is_enabled()){
+        err = rse_disable_debug_and_reset();
+        if (err != TFM_PLAT_ERR_SUCCESS) {
+            return err;
+        }
+
+        /* This function returning (and not resetting) is an error */
+        FATAL_ERR(TFM_PLAT_ERR_PROVISIONING_DEBUG_DISABLE_FAILED);
+        return TFM_PLAT_ERR_PROVISIONING_DEBUG_DISABLE_FAILED;
     }
 
-    lcm_get_sp_enabled(&LCM_DEV_S, &sp_mode_enabled);
+    lcm_err = lcm_get_sp_enabled(&LCM_DEV_S, &sp_mode_enabled);
+    if (lcm_err != LCM_ERROR_NONE) {
+        return (enum tfm_plat_err_t)lcm_err;
+    }
+
     if (is_sp_mode_required_for_blob(blob) != (sp_mode_enabled == LCM_TRUE)) {
         FATAL_ERR(TFM_PLAT_ERR_PROVISIONING_INVALID_SP_MODE);
         return TFM_PLAT_ERR_PROVISIONING_INVALID_SP_MODE;
@@ -677,8 +712,11 @@ enum tfm_plat_err_t default_blob_handler(const struct rse_provisioning_message_b
                                    PROVISIONING_BUNDLE_VALUES_SIZE,
                                    blob_ctx->setup_aes_key, blob_ctx->get_rotpk);
     if (err != TFM_PLAT_ERR_SUCCESS) {
+        blob_handling_status_report_error(PROVISIONING_REPORT_STEP_VALIDATE_BLOB, err);
         return err;
     }
+
+    blob_handling_status_report_continue(PROVISIONING_REPORT_STEP_VALIDATE_BLOB);
 
     err = run_blob((void *)PROVISIONING_BUNDLE_CODE_START);
     if (err != TFM_PLAT_ERR_SUCCESS) {

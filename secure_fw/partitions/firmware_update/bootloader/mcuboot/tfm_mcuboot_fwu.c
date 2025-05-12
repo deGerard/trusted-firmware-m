@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -7,7 +7,7 @@
 #include <string.h>
 #include "psa/crypto.h"
 #include "psa/error.h"
-#include "tfm_sp_log.h"
+#include "tfm_log_unpriv.h"
 #include "bootutil_priv.h"
 #include "bootutil/bootutil.h"
 #include "bootutil/image.h"
@@ -49,13 +49,6 @@ typedef struct tfm_fwu_mcuboot_ctx_s {
 static tfm_fwu_mcuboot_ctx_t mcuboot_ctx[FWU_COMPONENT_NUMBER];
 static fwu_image_info_data_t __attribute__((aligned(4))) boot_shared_data;
 
-static psa_status_t fwu_bootloader_get_shared_data(void)
-{
-    return tfm_core_get_boot_data(TLV_MAJOR_FWU,
-                                  (struct tfm_boot_data *)&boot_shared_data,
-                                  sizeof(boot_shared_data));
-}
-
 static psa_status_t get_active_image_version(psa_fwu_component_t component,
                                              struct image_version *image_ver)
 {
@@ -94,9 +87,17 @@ static psa_status_t get_active_image_version(psa_fwu_component_t component,
 
 psa_status_t fwu_bootloader_init(void)
 {
-    if (fwu_bootloader_get_shared_data() != PSA_SUCCESS) {
+    psa_status_t ret;
+
+    /* Get shared bootloader data */
+    ret = tfm_core_get_boot_data(TLV_MAJOR_FWU,
+                                 (struct tfm_boot_data *)&boot_shared_data,
+                                 sizeof(boot_shared_data));
+
+    if (ret != PSA_SUCCESS) {
         return PSA_ERROR_STORAGE_FAILURE;
     }
+
     /* add Init of specific flash driver */
     flash_area_driver_init();
     return PSA_SUCCESS;
@@ -115,12 +116,12 @@ psa_status_t fwu_bootloader_staging_area_init(psa_fwu_component_t component,
 
     if (flash_area_open(FLASH_AREA_IMAGE_SECONDARY(component),
                         &fap) != 0) {
-        LOG_ERRFMT("TFM FWU: opening flash failed.\r\n");
+        ERROR_UNPRIV_RAW("TFM FWU: opening flash failed.\n");
         return PSA_ERROR_STORAGE_FAILURE;
     }
 
     if (flash_area_erase(fap, 0, fap->fa_size) != 0) {
-        LOG_ERRFMT("TFM FWU: erasing flash failed.\r\n");
+        ERROR_UNPRIV_RAW("TFM FWU: erasing flash failed.\n");
         return PSA_ERROR_GENERIC_ERROR;
     }
 
@@ -151,7 +152,7 @@ psa_status_t fwu_bootloader_load_image(psa_fwu_component_t component,
     }
 
     if (flash_area_write(fap, image_offset, block, block_size) != 0) {
-        LOG_ERRFMT("TFM FWU: write flash failed.\r\n");
+        ERROR_UNPRIV_RAW("TFM FWU: write flash failed.\n");
         return PSA_ERROR_STORAGE_FAILURE;
     }
 
@@ -509,7 +510,7 @@ static psa_status_t util_img_hash(const struct flash_area *fap,
     psa_status_t status;
     uint8_t tmpbuf[BOOT_TMPBUF_SZ];
     uint32_t tmp_buf_sz = BOOT_TMPBUF_SZ;
-    uint32_t blk_sz;
+    uint32_t blk_sz = 0;
     uint32_t off;
 
     /* Setup the hash object for the desired hash. */
@@ -560,7 +561,7 @@ static psa_status_t get_second_image_digest(psa_fwu_component_t component,
     }
     if ((flash_area_open(FLASH_AREA_IMAGE_SECONDARY(component),
                             &fap)) != 0) {
-        LOG_ERRFMT("TFM FWU: opening flash failed.\r\n");
+        ERROR_UNPRIV_RAW("TFM FWU: opening flash failed.\n");
         return PSA_ERROR_STORAGE_FAILURE;
     }
 
@@ -598,7 +599,7 @@ psa_status_t fwu_bootloader_get_image_info(psa_fwu_component_t component,
 
     if ((flash_area_open(FLASH_AREA_IMAGE_PRIMARY(component),
                         &fap)) != 0) {
-        LOG_ERRFMT("TFM FWU: opening flash failed.\r\n");
+        ERROR_UNPRIV_RAW("TFM FWU: opening flash failed.\n");
         return PSA_ERROR_STORAGE_FAILURE;
     }
     info->max_size = fap->fa_size;
