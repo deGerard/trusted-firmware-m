@@ -11,70 +11,54 @@
 
 #include "region_defs.h"
 #include "rse_provisioning_message_handler.h"
-#include "rse_provisioning_comms.h"
+#include "rse_provisioning_message_status.h"
+#include "rse_provisioning_blob_handler.h"
 #include "device_definition.h"
 #include "tfm_log.h"
 #include "tfm_hal_platform.h"
 #include "rse_provisioning_aes_key.h"
 #include "rse_provisioning_rotpk.h"
 #include "rse_persistent_data.h"
+#include "rse_provisioning_get_message.h"
 
+#include <assert.h>
 #include <string.h>
-
-static inline bool found_valid_message_type(const struct rse_provisioning_message_t *message)
-{
-    const enum rse_provisioning_message_type_t msg_type = message->header.type;
-
-    return (msg_type == RSE_PROVISIONING_MESSAGE_TYPE_BLOB) ||
-           (msg_type == RSE_PROVISIONING_MESSAGE_TYPE_CERTIFICATE) ||
-           (msg_type == RSE_PROVISIONING_MESSAGE_TYPE_PLAIN_DATA);
-}
-
-static inline bool blob_is_in_sram(const struct rse_provisioning_message_t *message, size_t size)
-{
-    uintptr_t message_ptr = (uintptr_t)message;
-
-    return (message_ptr <= (UINTPTR_MAX - size)) && (message_ptr >= VM0_BASE_S) &&
-           ((message_ptr + size) <= (VM0_BASE_S + VM0_SIZE + VM1_SIZE));
-}
 
 void tfm_plat_provisioning_check_for_dummy_keys(void)
 {
     /* FixMe: Check for dummy key must be implemented */
 }
 
-int tfm_plat_provisioning_is_required(void)
+enum tfm_plat_err_t tfm_plat_provisioning_is_required(bool *provisioning_required)
 {
     enum lcm_error_t err;
     enum lcm_lcs_t lcs;
-    bool provisioning_required;
+
+    if (provisioning_required == NULL) {
+        return TFM_PLAT_ERR_INVALID_INPUT;
+    }
 
     err = lcm_get_lcs(&LCM_DEV_S, &lcs);
     if (err != LCM_ERROR_NONE) {
-        assert(false);
-        return false;
+        return err;
     }
 
-    provisioning_required = (lcs == LCM_LCS_CM || lcs == LCM_LCS_DM);
+    *provisioning_required = (lcs == LCM_LCS_CM);
 
-    return provisioning_required;
+#ifndef RSE_BOOT_IN_DM_LCS
+    *provisioning_required = *provisioning_required || (lcs == LCM_LCS_DM);
+#endif
+
+    return TFM_PLAT_ERR_SUCCESS;
 }
 
 enum tfm_plat_err_t tfm_plat_provisioning_perform(void)
 {
     INFO("Beginning RSE provisioning\n");
     enum tfm_plat_err_t err;
-    struct rse_persistent_data *persistent_data;
     const struct rse_provisioning_message_t *provisioning_message =
         (const struct rse_provisioning_message_t *)PROVISIONING_MESSAGE_START;
-    const struct rse_provisioning_message_t *persistent_data_message;
-    size_t provisioning_message_size = RSE_PROVISIONING_MESSAGE_MAX_SIZE;
-    size_t *persistent_data_message_size;
-    bool found_persistent_data_message = false;
-#ifdef RSE_BOOT_IN_DM_LCS
-    enum lcm_error_t lcm_err;
-    enum lcm_lcs_t lcs;
-#endif
+    const size_t provisioning_message_size = RSE_PROVISIONING_MESSAGE_MAX_SIZE;
 
     struct provisioning_message_handler_config config = {
         .blob_handler = &default_blob_handler,
@@ -88,78 +72,22 @@ enum tfm_plat_err_t tfm_plat_provisioning_perform(void)
         .blob_is_chainloaded = false,
     };
 
-#ifdef RSE_BOOT_IN_DM_LCS
-    lcm_err = lcm_get_lcs(&LCM_DEV_S, &lcs);
-    if (lcm_err != LCM_ERROR_NONE) {
-        return (enum tfm_plat_err_t)lcm_err;
-    }
-#endif /* RSE_BOOT_IN_DM_LCS */
-
-    rse_get_persistent_data(&persistent_data);
-    persistent_data_message =
-        (const struct rse_provisioning_message_t *)persistent_data->bl1_data.provisioning_blob_buf;
-    persistent_data_message_size = &persistent_data->bl1_data.provisioning_blob_buf_size;
-    if ((persistent_data_message != NULL)) {
-        if (!blob_is_in_sram(persistent_data_message, *persistent_data_message_size)) {
-            return TFM_PLAT_ERR_PROVISIONING_MESSAGE_INVALID_LOCATION;
-        }
-
-        if (found_valid_message_type(persistent_data_message)) {
-            found_persistent_data_message = true;
-        }
+    err = rse_provisioning_get_message(provisioning_message, provisioning_message_size,
+                                       PROVISIONING_STAGING_STATUS_BL1_1_MESSAGE);
+    if (err != TFM_PLAT_ERR_SUCCESS) {
+        return err;
     }
 
-    /*
-     * There are three options for where we can load the provisioning blob from:
-     *  1. If a blob is present in the SRAM persistent data because it has been
-     *     stashed there by runtime provisioning comms handling. This could be
-     *     for DM LCS provisioning and therefore we check this before the LCS
-     *     state
-     *  2. A blob pre-loaded into the SRAM standard staging area
-     *  3. A blob passed over the provisioning comms, which will be stashed
-     *     in the standard staging area
-     */
-    if (found_persistent_data_message) {
-        provisioning_message = persistent_data_message;
-        provisioning_message_size = *persistent_data_message_size;
-#ifdef RSE_BOOT_IN_DM_LCS
-    } else if (lcs == LCM_LCS_DM) {
-        return TFM_PLAT_ERR_SUCCESS;
-#endif
-    } else if (!found_valid_message_type(provisioning_message)) {
-        err = provisioning_comms_init(provisioning_message, provisioning_message_size);
-        if (err != TFM_PLAT_ERR_SUCCESS) {
-            return err;
-        }
-
-        err = provisioning_comms_receive_commands_blocking();
-        if (err != TFM_PLAT_ERR_SUCCESS) {
-            return err;
-        }
-    }
-
-    /* FixMe: Check if the current way of handling blobs can result in running
-     *        a malformed blob in case a reset happens in the middle of an
-     *        operation which has already written the blob header
-     */
     err = handle_provisioning_message(provisioning_message, provisioning_message_size, &config,
                                       (void *)&ctx);
     if (err != TFM_PLAT_ERR_SUCCESS) {
         memset((void *)provisioning_message, 0, provisioning_message_size);
-        blob_handling_status_report_error(PROVISIONING_REPORT_STEP_RUN_BLOB, err);
+        rse_set_provisioning_staging_status(PROVISIONING_STAGING_STATUS_NO_MESSAGE);
+        message_handling_status_report_error(PROVISIONING_REPORT_STEP_RUN_BLOB, err);
         return err;
     }
 
-    /*
-     * If we have provisioned the persistent data message, set persistent data pointer to
-     * NULL to prevent us trying to run the blob again if the blob does not change the LCS
-     */
-    if (found_persistent_data_message) {
-        persistent_data_message = NULL;
-        *persistent_data_message_size = 0;
-    }
-
-    tfm_hal_system_reset();
+    tfm_hal_system_reset(TFM_PLAT_SWSYN_DEFAULT);
 
     return TFM_PLAT_ERR_SUCCESS;
 }

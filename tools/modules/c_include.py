@@ -8,6 +8,8 @@
 
 import os
 import json
+import argparse
+import sys
 
 import logging
 logger = logging.getLogger("TF-M.{}".format(__name__))
@@ -20,16 +22,16 @@ def get_compile_command(compile_commands_file, c_file):
 
 def get_includes(compile_commands_file, c_file):
     compile_command = get_compile_command(compile_commands_file, c_file).split()
-    return [x[2:].strip() for x in compile_command if x.rstrip()[:2] == "-I"]
+    ret = []
+    ret.extend([x[2:].strip() for x in compile_command if x.rstrip()[:2] == "-I"])
+    ret.extend([compile_command[i+1] for i, x in enumerate(compile_command[:-1]) if x == "-isystem"])
+    return ret
 
 def get_defines(compile_commands_file, c_file):
     compile_command = get_compile_command(compile_commands_file, c_file).split()
     return [x[2:].strip() for x in compile_command if x.rstrip()[:2] == "-D"]
 
-
-if __name__ == '__main__':
-    import argparse
-
+def main():
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--compile_commands_file", help="path to compile_command.json", required=True)
     parser.add_argument("--c_file", help="name of the c file to take", required=True)
@@ -41,3 +43,7 @@ if __name__ == '__main__':
     print(get_compile_command(args.compile_commands_file, args.c_file))
     print(get_includes(args.compile_commands_file, args.c_file))
     print(get_defines(args.compile_commands_file, args.c_file))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

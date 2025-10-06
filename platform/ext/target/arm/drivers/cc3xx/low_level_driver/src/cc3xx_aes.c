@@ -1,24 +1,29 @@
 /*
- * Copyright (c) 2021-2024, The TrustedFirmware-M Contributors. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
  */
 
-#include "cc3xx_aes.h"
+#ifndef CC3XX_CONFIG_FILE
+#include "cc3xx_config.h"
+#else
+#include CC3XX_CONFIG_FILE
+#endif
 
+#include <assert.h>
+#include <stdbool.h>
+#include "endian.h"
+#include <stdint.h>
+
+#include "cc3xx_aes.h"
 #include "cc3xx_dev.h"
 #include "cc3xx_dma.h"
 #include "cc3xx_hash.h"
 #include "cc3xx_lcs.h"
 #include "cc3xx_engine_state.h"
-#include "cc3xx_endian_helpers.h"
 #include "cc3xx_stdlib.h"
 #include "cc3xx_rng.h"
-
-#include <assert.h>
-#include <stdbool.h>
-#include <stdint.h>
 
 #include "fatal_error.h"
 
@@ -246,7 +251,7 @@ static void gcm_calc_initial_counter_from_iv(uint32_t *counter,
     P_CC3XX->ghash.ghash_iv_0[3] = zero_iv[3];
 
     /* Feed IV into the DMA, padding with zeroes. */
-    cc3xx_lowlevel_dma_buffered_input_data(iv, iv_len, false);
+    cc3xx_lowlevel_dma_buffered_input_data(iv, iv_len, false, false);
     cc3xx_lowlevel_dma_flush_buffer(true);
 
     /* Make up the length block, 8 bytes of zeros and a big-endian 64-bit size
@@ -254,7 +259,7 @@ static void gcm_calc_initial_counter_from_iv(uint32_t *counter,
      */
     memset(iv_block_buf, 0, sizeof(iv_block_buf));
     ((uint64_t *)iv_block_buf)[1] = bswap_64((uint64_t)iv_len * 8);
-    cc3xx_lowlevel_dma_buffered_input_data(iv_block_buf, sizeof(iv_block_buf), false);
+    cc3xx_lowlevel_dma_buffered_input_data(iv_block_buf, sizeof(iv_block_buf), false, false);
     cc3xx_lowlevel_dma_flush_buffer(false);
 
     /* Wait for the GHASH to complete */
@@ -282,7 +287,7 @@ static void gcm_init_iv(const uint32_t *iv, size_t iv_len)
 
     /* Encrypt the all-zero block to get the hash key */
     cc3xx_lowlevel_dma_set_output(aes_state.ghash_key, sizeof(aes_state.ghash_key));
-    cc3xx_lowlevel_dma_buffered_input_data(zero_iv, sizeof(zero_iv), true);
+    cc3xx_lowlevel_dma_buffered_input_data(zero_iv, sizeof(zero_iv), true, true);
     cc3xx_lowlevel_dma_flush_buffer(false);
 
     /* This is a preparatory operation so no need to count it in the output size */
@@ -433,6 +438,64 @@ static cc3xx_err_t init_from_state(void)
         P_CC3XX->hash.hash_sel_aes_mac = 0b10U;
     }
 #endif /* CC3XX_CONFIG_AES_GCM_ENABLE */
+
+    return CC3XX_ERR_SUCCESS;
+}
+
+cc3xx_err_t cc3xx_lowlevel_aes_valid_iv_length(
+    cc3xx_aes_mode_t mode,
+    size_t iv_len)
+{
+    switch (mode) {
+#ifdef CC3XX_CONFIG_AES_CMAC_ENABLE
+    case CC3XX_AES_MODE_CMAC:
+        /* No IV to set up for CMAC */
+        (void)iv_len;
+        return CC3XX_ERR_INVALID_IV_LENGTH;
+#endif /* CC3XX_CONFIG_AES_CMAC_ENABLE */
+#ifdef CC3XX_CONFIG_AES_ECB_ENABLE
+    case CC3XX_AES_MODE_ECB:
+        /* No IV to set up for ECB */
+        (void)iv_len;
+        return CC3XX_ERR_INVALID_IV_LENGTH;
+#endif /* CC3XX_CONFIG_AES_ECB_ENABLE */
+#ifdef CC3XX_CONFIG_AES_CTR_ENABLE
+    case CC3XX_AES_MODE_CTR:
+        if (iv_len != 16) {
+            return CC3XX_ERR_INVALID_IV_LENGTH;
+        }
+        break;
+#endif /* CC3XX_CONFIG_AES_CTR_ENABLE */
+#ifdef CC3XX_CONFIG_AES_CBC_ENABLE
+    case CC3XX_AES_MODE_CBC:
+        if (iv_len != 16) {
+            return CC3XX_ERR_INVALID_IV_LENGTH;
+        }
+        break;
+#endif /* CC3XX_CONFIG_AES_CBC_ENABLE */
+#ifdef CC3XX_CONFIG_AES_GCM_ENABLE
+    case CC3XX_AES_MODE_GCM:
+#ifdef CC3XX_CONFIG_AES_GCM_VARIABLE_IV_ENABLE
+        if (iv_len == 0) {
+            return CC3XX_ERR_INVALID_IV_LENGTH;
+        }
+#else
+        if (iv_len != 12) {
+            return CC3XX_ERR_INVALID_IV_LENGTH;
+        }
+#endif /* CC3XX_CONFIG_AES_GCM_VARIABLE_IV_ENABLE */
+        break;
+#endif /* CC3XX_CONFIG_AES_GCM_ENABLE */
+#ifdef CC3XX_CONFIG_AES_CCM_ENABLE
+    case CC3XX_AES_MODE_CCM:
+        if (!((iv_len >= 7) && (iv_len <= 13))) {
+            return CC3XX_ERR_INVALID_IV_LENGTH;
+        }
+        break;
+#endif /* CC3XX_CONFIG_AES_CCM_ENABLE */
+    default:
+        return CC3XX_ERR_NOT_IMPLEMENTED;
+    }
 
     return CC3XX_ERR_SUCCESS;
 }
@@ -710,7 +773,7 @@ static void ccm_calc_iv(bool from_auth)
            ((uint8_t *)&crypt_length_be) + sizeof(crypt_length_be) - q, q);
 
     /* Input the B0 block into the CBC-MAC */
-    cc3xx_lowlevel_dma_buffered_input_data(b0_block, sizeof(b0_block), false);
+    cc3xx_lowlevel_dma_buffered_input_data(b0_block, sizeof(b0_block), false, false);
 
     /* The initial counter value is the same construction as b0, except that the
      * ciphertext length is set to 0 and used at the counter (a neat way to
@@ -727,6 +790,53 @@ static void ccm_calc_iv(bool from_auth)
     b0_block[15] = 0x1;
     set_ctr((uint32_t *) b0_block);
 }
+
+#ifndef CC3XX_CONFIG_AES_TUNNELLING_ENABLE
+void c3xx_lowlevel_aes_ccm_init_ctr(uint8_t *ctr, const uint8_t *nonce, size_t nonce_size)
+{
+    /* The formatting of the counter block is [Flags None [i]8q].
+     * q is the byte length of the binary representation of the byte length of the payload,
+     * note that q assumes the range 2 << q << 8.
+     * the bit formatting of Flags is [0 0 0 0 0 [q-1]3]
+     */
+
+    /* Compute q */
+    const uint32_t q = AES_BLOCK_SIZE - 1 - nonce_size;
+
+    /* Write [q - 1]3 to its field in Flags */
+    ctr[0] = (q - 1) & 0b111;
+
+    /* Copy the nonce */
+    memcpy(ctr + 1, nonce, nonce_size);
+
+    /* Initialise the counter value for encryption to 1 */
+    ctr[AES_BLOCK_SIZE - 1] = 0x1;
+}
+
+void c3xx_lowlevel_aes_ccm_incr_ctr(uint8_t *ctr, const size_t incr_val)
+{
+    /* The formatting of the counter block is [Flags None [i]8q].
+     * q is the byte length of the binary representation of the byte length of the payload,
+     * note that q assumes the range 2 << q << 8.
+     * the bit formatting of Flags is [0 0 0 0 0 [q-1]3]
+     */
+
+    /* Extract "q" from Flags */
+    const size_t q = (ctr[0] & 0b111) + 1;
+
+    /* Use q to find the counter value offset */
+    const size_t ctr_pos = AES_BLOCK_SIZE - q;
+
+    /* Counter size can be up to 8 bytes, positioned at the end of the buffer */
+    uint64_t ctr_val = *((uint64_t *)(ctr + AES_BLOCK_SIZE - sizeof(uint64_t)));
+
+    /* The counter is encoded in big-endian format */
+    ctr_val = bswap_64(bswap_64(ctr_val) + incr_val);
+
+    /* counter write-back using the correct offset */
+    memcpy(ctr + ctr_pos, ((uint8_t *)&ctr_val) + sizeof(uint64_t) - q, q);
+}
+#endif /* !CC3XX_CONFIG_AES_TUNNELLING_ENABLE */
 #endif /* CC3XX_CONFIG_AES_CCM_ENABLE */
 
 static void configure_engine_for_authed_data(bool *write_output)
@@ -774,13 +884,14 @@ static size_t ccm_input_auth_length(void)
         auth_length_byte_length = 6;
     }
 
-    cc3xx_lowlevel_dma_buffered_input_data(auth_length_buf, auth_length_byte_length, false);
+    cc3xx_lowlevel_dma_buffered_input_data(auth_length_buf, auth_length_byte_length, false, false);
     return auth_length_byte_length;
 }
 #endif /* CC3XX_CONFIG_AES_CCM_ENABLE */
 
 void cc3xx_lowlevel_aes_update_authed_data(const uint8_t* in, size_t in_len)
 {
+    cc3xx_err_t err;
     bool write_output;
 
     if (in_len == 0) {
@@ -813,9 +924,17 @@ void cc3xx_lowlevel_aes_update_authed_data(const uint8_t* in, size_t in_len)
     }
 
     configure_engine_for_authed_data(&write_output);
+    assert(write_output == false);
 
     aes_state.authed_length += in_len;
-    cc3xx_lowlevel_dma_buffered_input_data(in, in_len, write_output);
+
+    /**
+     * @note write_output is always false, so the return value cannot be
+     *       CC3XX_ERR_DMA_OUTPUT_BUFFER_TOO_SMALL, hence must always be
+     *       equal to success.
+     */
+    err = cc3xx_lowlevel_dma_buffered_input_data(in, in_len, write_output, write_output);
+    assert(err == CC3XX_ERR_SUCCESS);
 }
 
 static void configure_engine_for_crypted_data(bool *write_output)
@@ -855,7 +974,7 @@ static void configure_engine_for_crypted_data(bool *write_output)
 
         cc3xx_lowlevel_set_engine(CC3XX_ENGINE_AES);
 #else
-        /* Withut tunnelling, we just perform CBC_MAC */
+        /* Without tunnelling, we just perform CBC_MAC */
         *write_output = false;
         return;
 #endif /* CC3XX_CONFIG_AES_TUNNELLING_ENABLE */
@@ -871,7 +990,7 @@ static void configure_engine_for_crypted_data(bool *write_output)
 cc3xx_err_t cc3xx_lowlevel_aes_update(const uint8_t* in, size_t in_len)
 {
     cc3xx_err_t err;
-    bool write_output;
+    bool write_output, validate_output;
 
     /* MAC modes have no concept of encryption/decryption
      * so cc3xx_lowlevel_aes_update is a no-op.
@@ -921,9 +1040,14 @@ cc3xx_err_t cc3xx_lowlevel_aes_update(const uint8_t* in, size_t in_len)
 #endif /* defined(CC3XX_CONFIG_AES_CCM_ENABLE) */
 
     configure_engine_for_crypted_data(&write_output);
+    validate_output = write_output;
 
     aes_state.crypted_length += in_len;
-    err = cc3xx_lowlevel_dma_buffered_input_data(in, in_len, write_output);
+    if ((aes_state.crypted_length < AES_BLOCK_SIZE) &&
+        (aes_state.mode == CC3XX_AES_MODE_CBC || aes_state.mode == CC3XX_AES_MODE_ECB)) {
+        validate_output = false;
+    }
+    err = cc3xx_lowlevel_dma_buffered_input_data(in, in_len, write_output, validate_output);
     if (err != CC3XX_ERR_SUCCESS) {
         return err;
     }
@@ -946,8 +1070,7 @@ static cc3xx_err_t tag_cmp_or_copy(uint32_t *tag, uint32_t *calculated_tag)
     bool are_different = 0;
 
     if (aes_state.direction == CC3XX_AES_DIRECTION_DECRYPT) {
-        cc3xx_lowlevel_rng_get_random_permutation(permutation_buf, tag_word_size,
-                                                  CC3XX_RNG_FAST);
+        cc3xx_lowlevel_rng_get_random_permutation(permutation_buf, tag_word_size);
 
         for (idx = 0; idx < tag_word_size; idx++) {
             are_different |= tag[permutation_buf[idx]] ^ calculated_tag[permutation_buf[idx]];
@@ -981,7 +1104,7 @@ static cc3xx_err_t gcm_finish(uint32_t *tag)
     cc3xx_lowlevel_set_engine(CC3XX_ENGINE_HASH);
 
     /* Input the length block in GHASH */
-    cc3xx_lowlevel_dma_buffered_input_data(len_block, sizeof(len_block), false);
+    cc3xx_lowlevel_dma_buffered_input_data(len_block, sizeof(len_block), false, false);
     cc3xx_lowlevel_dma_flush_buffer(false);
 
     /* Wait for the GHASH to finish */
@@ -999,8 +1122,7 @@ static cc3xx_err_t gcm_finish(uint32_t *tag)
     cc3xx_lowlevel_set_engine(CC3XX_ENGINE_AES);
 
     cc3xx_lowlevel_dma_set_output(calculated_tag, sizeof(calculated_tag));
-    cc3xx_lowlevel_dma_buffered_input_data(final_block, AES_GCM_FIELD_POINT_SIZE,
-                                  true);
+    cc3xx_lowlevel_dma_buffered_input_data(final_block, AES_GCM_FIELD_POINT_SIZE, true, true);
     cc3xx_lowlevel_dma_flush_buffer(false);
 
     while(P_CC3XX->aes.aes_busy) {}
@@ -1051,7 +1173,7 @@ static cc3xx_err_t ccm_finish(uint32_t *tag)
     set_ctr(aes_state.counter_0);
     set_mode(CC3XX_AES_MODE_CTR);
     cc3xx_lowlevel_dma_set_output(calculated_tag, sizeof(calculated_tag));
-    cc3xx_lowlevel_dma_buffered_input_data(calculated_tag, sizeof(calculated_tag), true);
+    cc3xx_lowlevel_dma_buffered_input_data(calculated_tag, sizeof(calculated_tag), true, true);
     cc3xx_lowlevel_dma_flush_buffer(false);
 
     return tag_cmp_or_copy(tag, calculated_tag);

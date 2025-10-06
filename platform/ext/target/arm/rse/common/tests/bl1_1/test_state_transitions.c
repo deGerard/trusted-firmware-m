@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -18,20 +18,8 @@ void rse_test_virgin_to_tci_or_pci(struct test_result_t *ret)
 {
     enum lcm_tp_mode_t tp_mode;
     enum lcm_error_t lcm_err;
-    cc3xx_err_t cc_err;
-    uint32_t random_word;
 
-    cc_err = cc3xx_lowlevel_rng_get_random(&random_word, sizeof(random_word), CC3XX_RNG_DRBG);
-    if (cc_err != CC3XX_ERR_SUCCESS) {
-        TEST_FAIL("RNG coin flip failed");
-        return;
-    }
-
-    if (random_word & 0b1) {
-        tp_mode = LCM_TP_MODE_PCI;
-    } else {
-        tp_mode = LCM_TP_MODE_TCI;
-    }
+    tp_mode = RSE_TESTS_TP_MODE;
 
     printf_set_color(MAGENTA);
     TEST_LOG("Entering %s mode\r\n", tp_mode == LCM_TP_MODE_PCI ? "PCI" : "TCI");
@@ -43,7 +31,7 @@ void rse_test_virgin_to_tci_or_pci(struct test_result_t *ret)
         return;
     }
 
-    tfm_hal_system_reset();
+    tfm_hal_system_reset(TFM_PLAT_SWSYN_DEFAULT);
 
     ret->val = TEST_PASSED;
     return;
@@ -143,7 +131,7 @@ void rse_test_cm_to_dm(struct test_result_t *ret)
         return;
     }
 
-    tfm_hal_system_reset();
+    tfm_hal_system_reset(TFM_PLAT_SWSYN_DEFAULT);
 
     ret->val = TEST_PASSED;
     return;
@@ -176,7 +164,7 @@ void rse_test_dm_to_se(struct test_result_t *ret)
         return;
     }
 
-    tfm_hal_system_reset();
+    tfm_hal_system_reset(TFM_PLAT_SWSYN_DEFAULT);
 
     ret->val = TEST_PASSED;
     return;
@@ -195,7 +183,7 @@ void rse_test_se_to_rma(struct test_result_t *ret)
         return;
     }
 
-    tfm_hal_system_reset();
+    tfm_hal_system_reset(TFM_PLAT_SWSYN_DEFAULT);
 
     ret->val = TEST_PASSED;
     return;

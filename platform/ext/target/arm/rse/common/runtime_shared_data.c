@@ -7,6 +7,7 @@
 
 #include <string.h>
 #include "runtime_shared_data.h"
+#include "rse_persistent_data.h"
 #include "region_defs.h"
 #include "soft_crc.h"
 
@@ -20,8 +21,8 @@ int runtime_add_data_to_shared_area(uint8_t        major_type,
     uintptr_t tlv_end, offset, base_addr;
     size_t region_size;
 
-    base_addr = RUNTIME_SERVICE_TO_BOOT_SHARED_REGION_BASE;
-    region_size = RUNTIME_SERVICE_TO_BOOT_SHARED_REGION_SIZE;
+    base_addr = (uintptr_t)RSE_PERSISTENT_DATA->shared_data.runtime_to_boot_data;
+    region_size = sizeof(RSE_PERSISTENT_DATA->shared_data.runtime_to_boot_data);
 
     if (data == NULL) {
         return -1;
@@ -94,7 +95,8 @@ int get_runtime_shared_data(uint8_t  major_type,
     if (data == NULL) {
         return -1;
     }
-    runtime_data = (struct tfm_runtime_data *)RUNTIME_SERVICE_TO_BOOT_SHARED_REGION_BASE;
+
+    runtime_data = (struct tfm_runtime_data *)RSE_PERSISTENT_DATA->shared_data.runtime_to_boot_data;
 
     /* The ADAC runtime service writes the permission mask bits into the memory
      * which is shared between TF-M ADAC runtime service and BL1_1

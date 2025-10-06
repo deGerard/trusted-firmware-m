@@ -12,6 +12,7 @@ target_sources(tfm_test_suite_extra_bl1_1
         ./bl1_1_test.c
         ./rse_provisioning_tests.c
         ./test_state_transitions.c
+        ./test_bl1_rse_kmu_keys.c
         ../rse_test_common.c
 )
 
@@ -25,6 +26,26 @@ target_link_libraries(tfm_test_suite_extra_bl1_1
     PRIVATE
         bl1_cc3xx_tests
         bl1_1_shared_lib_interface
+
+        driver_kmu_tests
+
+        bl1_common_tests
+        bl1_native_driver_tests
+)
+
+add_subdirectory(
+    ${CMAKE_CURRENT_SOURCE_DIR}/../native_drivers/
+    ${CMAKE_CURRENT_BINARY_DIR}/native_drivers/tests
+)
+
+add_subdirectory(
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/
+    ${CMAKE_CURRENT_BINARY_DIR}/common/tests
+)
+
+add_subdirectory(
+    ${CMAKE_SOURCE_DIR}/platform/ext/target/arm/drivers/kmu/tests
+    ${CMAKE_CURRENT_BINARY_DIR}/drivers/tests
 )
 
 if (TEST_DCSU_DRV)

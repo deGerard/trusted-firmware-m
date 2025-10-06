@@ -16,17 +16,21 @@
 #include "tfm_hal_device_header.h"
 #include "device_definition.h"
 #include "fatal_error.h"
+#include "fih.h"
 
 #include <stddef.h>
 #include <stdint.h>
 #include <assert.h>
 
 #ifdef LCM_DCU_PARITY
-#define DCU_ENABLED_MASK  0x55555555
-#define DCU_DISABLED_MASK 0xAAAAAAAA
-#else
-#define DCU_ENABLED_MASK  0xFFFFFFFF
-#define DCU_DISABLED_MASK 0x00000000
+#define DCU_PARITY_ENABLED_MASK     0x55555555
+#define DCU_PARITY_DISABLED_MASK    0xAAAAAAAA
+#define PAIRS_PER_WORD              (sizeof(uint32_t) * 8) / 2
+
+#ifndef LCM_DCU_PAIR_COUNT
+/* 4 DCU words, 16 pair each */
+#define LCM_DCU_PAIR_COUNT (PAIRS_PER_WORD*4)
+#endif /* LCM_DCU_PAIR_COUNT */
 #endif
 
 #ifdef INTEGRITY_CHECKER_S
@@ -94,6 +98,52 @@ struct _lcm_reg_map_t {
     };
 };
 
+#ifdef LCM_DCU_PARITY
+static size_t dcu_pairs_per_idx(uint32_t idx)
+{
+    size_t dcu_pairs = 0;
+
+    /* The driver supports only 4 DCU words */
+    assert(idx < 4);
+    assert(LCM_DCU_PAIR_COUNT <= (PAIRS_PER_WORD * 4));
+
+    if (LCM_DCU_PAIR_COUNT > (idx * PAIRS_PER_WORD)) {
+        dcu_pairs = LCM_DCU_PAIR_COUNT - (idx * PAIRS_PER_WORD);
+        dcu_pairs = (dcu_pairs > PAIRS_PER_WORD) ? PAIRS_PER_WORD :
+                                                   dcu_pairs;
+    }
+
+    return dcu_pairs;
+}
+#endif
+
+static uint32_t get_enabled_mask(uint32_t dcu_word_idx)
+{
+#ifndef LCM_DCU_PARITY
+    (void)dcu_word_idx;
+    return 0xFFFFFFFF;
+#else
+    const size_t dcu_pairs = dcu_pairs_per_idx(dcu_word_idx);
+    const size_t enabled_non_paired_bit_mask = (~0U) << (dcu_pairs * 2);
+
+    return enabled_non_paired_bit_mask |
+                (~enabled_non_paired_bit_mask & DCU_PARITY_ENABLED_MASK);
+#endif
+}
+
+static uint32_t get_disabled_mask(uint32_t dcu_word_idx)
+{
+#ifndef LCM_DCU_PARITY
+    (void)dcu_word_idx;
+    return 0x00000000;
+#else
+    const size_t dcu_pairs = dcu_pairs_per_idx(dcu_word_idx);
+    const size_t disabled_non_paired_bit_mask = (~0U) << (dcu_pairs * 2);
+
+    return ~disabled_non_paired_bit_mask & DCU_PARITY_DISABLED_MASK;
+#endif
+}
+
 static int is_pointer_word_aligned(void *ptr) {
     return !((uintptr_t)ptr & (sizeof(uint32_t) - 1));
 }
@@ -154,9 +204,7 @@ enum lcm_error_t lcm_get_tp_mode(struct lcm_dev_t *dev, enum lcm_tp_mode_t *mode
 
     *mode = (enum lcm_tp_mode_t)p_lcm->tp_mode;
 
-#ifdef KMU_S
-        kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
-#endif /* KMU_S */
+    fih_delay();
 
     double_check_mode = (enum lcm_tp_mode_t)p_lcm->tp_mode;
 
@@ -243,9 +291,7 @@ enum lcm_error_t lcm_get_sp_enabled(struct lcm_dev_t *dev, enum lcm_bool_t *enab
 
     *enabled = (enum lcm_bool_t)p_lcm->sp_enable;
 
-#ifdef KMU_S
-    kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
-#endif /* KMU_S */
+    fih_delay();
 
     double_check_sp_mode = (enum lcm_bool_t)p_lcm->sp_enable;
 
@@ -268,13 +314,13 @@ static inline void mask_dcus_for_sp_enable(struct lcm_dev_t *dev)
     for (idx = 0; idx < LCM_DCU_WIDTH_IN_BYTES / sizeof(uint32_t); idx++) {
         mask_val = p_lcm->dcu_sp_disable_mask[idx];
 
-        mask_enabled = mask_val & DCU_ENABLED_MASK;
-        mask_disabled = mask_val & DCU_DISABLED_MASK;
+        mask_enabled = mask_val & get_enabled_mask(idx);
+        mask_disabled = mask_val & get_disabled_mask(idx);
 
         dcu_val = p_lcm->dcu_en[idx];
 
         dcu_val &= mask_enabled;
-        dcu_val |= ((~dcu_val & DCU_ENABLED_MASK) << 1) & mask_disabled;
+        dcu_val |= ((~dcu_val & get_enabled_mask(idx)) << 1) & mask_disabled;
 
         p_lcm->dcu_en[idx] = dcu_val;
     }
@@ -371,9 +417,7 @@ enum lcm_error_t lcm_get_lcs(struct lcm_dev_t *dev, enum lcm_lcs_t *lcs)
 
     *lcs = (enum lcm_lcs_t)p_lcm->lcs_value;
 
-#ifdef KMU_S
-    kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
-#endif /* KMU_S */
+    fih_delay();
 
     double_check_lcs = (enum lcm_lcs_t)p_lcm->lcs_value;
 
@@ -933,9 +977,8 @@ enum lcm_error_t lcm_otp_read(struct lcm_dev_t *dev, uint32_t offset,
     for (idx = 0; idx < len / sizeof(uint32_t); idx++) {
         p_buf_word[idx] = p_lcm->raw_otp[(offset / sizeof(uint32_t)) + idx];
 
-#ifdef KMU_S
-        kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
-#endif /* KMU_S */
+        fih_delay();
+
         /* Double read verify is done in hardware for addresses outside of the
          * LCM OTP user area. In that case, don't perform a software check.
          */

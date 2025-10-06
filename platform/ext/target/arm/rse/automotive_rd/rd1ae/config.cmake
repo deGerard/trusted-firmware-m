@@ -1,5 +1,5 @@
 #-------------------------------------------------------------------------------
-# Copyright (c) 2024, Arm Limited. All rights reserved.
+# SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
 #
 # SPDX-License-Identifier: BSD-3-Clause
 #
@@ -16,7 +16,7 @@ set(PLATFORM_HAS_PS_NV_OTP_COUNTERS     ON       CACHE BOOL    "Platform support
 set(PLATFORM_HOST_HAS_SCP               ON       CACHE BOOL    "Enable SCP support")
 set(PLAT_MHU_VERSION                    3        CACHE STRING  "Supported MHU version by platform")
 set(RSE_HAS_EXPANSION_PERIPHERALS       ON       CACHE BOOL    "Whether RSE has sub-platform specific peripherals in the expansion layer")
-set(RSE_LOAD_NS_IMAGE                   OFF      CACHE BOOL    "Whether to load an NS image")
+set(TFM_LOAD_NS_IMAGE                   OFF      CACHE BOOL    "Whether to load an NS image")
 set(RSE_USE_HOST_FLASH                  OFF      CACHE BOOL    "Enable RSE using the host flash.")
 set(RSE_USE_HOST_UART                   OFF      CACHE BOOL    "Whether RSE should use the UART from the host system (opposed to dedicated UART private to RSE)")
 set(RSE_USE_LOCAL_UART                  ON       CACHE BOOL    "Whether RSE should use the local UART dedicated to RSE")
@@ -26,6 +26,9 @@ set(TFM_MANIFEST_LIST                   "${CMAKE_CURRENT_LIST_DIR}/manifest/tfm_
 set(TFM_MBEDCRYPTO_PLATFORM_EXTRA_CONFIG_PATH "" CACHE PATH    "Config to append to standard Mbed Crypto config, used by platforms to configure feature support")
 set(TFM_PARTITION_INTERNAL_TRUSTED_STORAGE ON    CACHE BOOL    "Enable Internal Trusted Storage partition")
 set(TFM_PARTITION_PROTECTED_STORAGE     ON       CACHE BOOL    "Enable Protected Storage partition")
+
+set(RSE_COMMS_NUMBER_NODES              4        CACHE STRING "Amount of nodes in the RSE comms system, by default equal to number of RSEs")
+set(MULTI_RSE_TOPOLOGY_FILE             ${CMAKE_CURRENT_LIST_DIR}/rse_comms/rd1ae.tgf CACHE STRING "Topology file for RSE to RSE BL1 communication")
 
 # Once all cache options are set, set common options as fallback
 include(${CMAKE_CURRENT_LIST_DIR}/../../common/config.cmake)

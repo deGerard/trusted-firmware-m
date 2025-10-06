@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  * Copyright (c) 2022-2024 Cypress Semiconductor Corporation (an Infineon
  * company) or an affiliate of Cypress Semiconductor Corporation. All rights
  * reserved.
@@ -20,7 +20,6 @@
 #include "tfm_hal_device_header.h"
 #include "tfm_svcalls.h"
 #include "utilities.h"
-#include "core_ext.h"
 #include "ffm/backend.h"
 
 #if !defined(__ARM_ARCH_8M_MAIN__) && !defined(__ARM_ARCH_8_1M_MAIN__)
@@ -261,24 +260,24 @@ FIH_RET_TYPE(int32_t) tfm_arch_verify_secure_exception_priorities(void)
     if ((scb->AIRCR & SCB_AIRCR_PRIS_Msk) != SCB_AIRCR_PRIS_Msk) {
         FIH_RET(FIH_FAILURE);
     }
-    if (fih_not_eq(fih_int_encode(NVIC_GetPriority(MemoryManagement_IRQn)),
-                  fih_int_encode(MemoryManagement_IRQnLVL))) {
+    if (FIH_NOT_EQ(NVIC_GetPriority(MemoryManagement_IRQn),
+                  MemoryManagement_IRQnLVL)) {
         FIH_RET(FIH_FAILURE);
     }
-    if (fih_not_eq(fih_int_encode(NVIC_GetPriority(BusFault_IRQn)),
-                  fih_int_encode(BusFault_IRQnLVL))) {
+    if (FIH_NOT_EQ(NVIC_GetPriority(BusFault_IRQn),
+                  BusFault_IRQnLVL)) {
         FIH_RET(FIH_FAILURE);
     }
-    if (fih_not_eq(fih_int_encode(NVIC_GetPriority(SecureFault_IRQn)),
-                  fih_int_encode(SecureFault_IRQnLVL))) {
+    if (FIH_NOT_EQ(NVIC_GetPriority(SecureFault_IRQn),
+                  SecureFault_IRQnLVL)) {
         FIH_RET(FIH_FAILURE);
     }
-    if (fih_not_eq(fih_int_encode(NVIC_GetPriority(SVCall_IRQn)),
-                  fih_int_encode(SVCall_IRQnLVL))) {
+    if (FIH_NOT_EQ(NVIC_GetPriority(SVCall_IRQn),
+                  SVCall_IRQnLVL)) {
         FIH_RET(FIH_FAILURE);
     }
-    if (fih_not_eq(fih_int_encode(NVIC_GetPriority(PendSV_IRQn)),
-                  fih_int_encode(PENDSV_PRIO_FOR_SCHED))) {
+    if (FIH_NOT_EQ(NVIC_GetPriority(PendSV_IRQn),
+                  PENDSV_PRIO_FOR_SCHED)) {
         FIH_RET(FIH_FAILURE);
     }
     FIH_RET(FIH_SUCCESS);
@@ -323,7 +322,6 @@ void tfm_arch_config_extensions(void)
 #endif /* defined(CONFIG_TFM_ENABLE_CP10CP11) */
 
 #if (CONFIG_TFM_FLOAT_ABI >= 1)
-
 #ifdef CONFIG_TFM_LAZY_STACKING
     /* Enable lazy stacking. */
     FPU->FPCCR |= FPU_FPCCR_LSPEN_Msk;
@@ -349,12 +347,10 @@ void tfm_arch_config_extensions(void)
 
     /* Prevent non-secure from modifying FPU’s power setting. */
 #if defined(__ARM_ARCH_8_1M_MAIN__) && (__ARM_ARCH_8_1M_MAIN__ == 1)
-    ICB->CPPWR |=
+    ICB->CPPWR |= ICB_CPPWR_SUS11_Msk | ICB_CPPWR_SUS10_Msk;
 #else
-    SCnSCB->CPPWR |=
+    SCnSCB->CPPWR |= SCnSCB_CPPWR_SUS11_Msk | SCnSCB_CPPWR_SUS10_Msk;
 #endif
-        SCnSCB_CPPWR_SUS11_Msk | SCnSCB_CPPWR_SUS10_Msk;
-
 #endif /* CONFIG_TFM_FLOAT_ABI >= 1 */
 
 #if defined(__ARM_ARCH_8_1M_MAIN__) && (__ARM_ARCH_8_1M_MAIN__ == 1)

@@ -7,9 +7,13 @@
 
 cmake_minimum_required(VERSION 3.21)
 
+include(hex_generator)
+
 fetch_remote_library(
     LIB_NAME                mcuboot
     LIB_SOURCE_PATH_VAR     MCUBOOT_PATH
+    LIB_PATCH_DIR           ${CMAKE_SOURCE_DIR}/lib/ext/mcuboot
+    LIB_FORCE_PATCH         ${MCUBOOT_FORCE_PATCH}
     FETCH_CONTENT_ARGS
         GIT_REPOSITORY      https://github.com/mcu-tools/mcuboot.git
         GIT_TAG             ${MCUBOOT_VERSION}
@@ -19,7 +23,13 @@ fetch_remote_library(
 
 add_library(mcuboot_config INTERFACE)
 
-set(MCUBOOT_KEY_ENC "${MCUBOOT_PATH}/enc-rsa2048-pub.pem" CACHE FILEPATH "Path to key with which to encrypt binary")
+if (MCUBOOT_ENCRYPT_KW)
+    set(MCUBOOT_KEY_ENC "${MCUBOOT_PATH}/enc-aeskw-128.b64" CACHE FILEPATH "Path to key with which to encrypt Secure firmware")
+    set(MCUBOOT_KEY_ENC_NS "${MCUBOOT_PATH}/enc-aeskw-128_ns.b64" CACHE FILEPATH "Path to key with which to encrypt non secure firmware")
+else()
+    set(MCUBOOT_KEY_ENC "${MCUBOOT_PATH}/enc-rsa2048-pub.pem" CACHE FILEPATH "Path to key with which to encrypt binary")
+    set(MCUBOOT_KEY_ENC_NS "${MCUBOOT_PATH}/enc-rsa2048-pub.pem" CACHE FILEPATH "Path to key with which to encrypt non secure firmware")
+endif()
 
 # Add/process CBOR encoded measured boot data (MCUBOOT_MEASURED_BOOT) only if
 # the store encoded measurements config is enabled. Otherwise, unencoded
@@ -64,17 +74,36 @@ target_include_directories(bl2
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-target_sources(bl2
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/bl2_main.c
-        $<$<BOOL:${PLATFORM_DEFAULT_ROTPK}>:${CMAKE_CURRENT_SOURCE_DIR}/keys.c>
-        ${CMAKE_CURRENT_SOURCE_DIR}/flash_map_extended.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/flash_map_legacy.c
+set(BL2_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/bl2_main.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/flash_map_extended.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/flash_map_legacy.c
 )
+
+if(PLATFORM_DEFAULT_IMAGE_ENCRYPTION)
+list(APPEND BL2_SOURCES $<$<BOOL:${MCUBOOT_ENC_IMAGES}>:${CMAKE_CURRENT_SOURCE_DIR}/keys_enc.c>)
+endif()
+
+if(PLATFORM_DEFAULT_ROTPK)
+    if(MCUBOOT_BUILTIN_KEY)
+        list(APPEND BL2_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/keys_builtin.c)
+    elseif(MCUBOOT_HW_KEY)
+        list(APPEND BL2_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/keys_hw.c)
+    else()
+        list(APPEND BL2_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/keys.c)
+    endif()
+endif()
+
+target_sources(bl2 PRIVATE ${BL2_SOURCES})
 
 target_compile_definitions(bl2
     PRIVATE
         MCUBOOT_SIGNATURE_TYPE=${MCUBOOT_SIGNATURE_TYPE}
+        $<$<BOOL:${MCUBOOT_BUILTIN_KEY}>:TFM_S_KEY_ID=${TFM_S_KEY_ID}>
+        $<$<BOOL:${MCUBOOT_BUILTIN_KEY}>:TFM_NS_KEY_ID=${TFM_NS_KEY_ID}>
+        MCUBOOT_ROTPK_MAX_KEYS_PER_IMAGE=${MCUBOOT_ROTPK_MAX_KEYS_PER_IMAGE}
+        $<$<BOOL:${MCUBOOT_IMAGE_MULTI_SIG_SUPPORT}>:MCUBOOT_IMAGE_MULTI_SIG_SUPPORT>
+        $<$<BOOL:${MCUBOOT_ROTPK_SIGN_POLICY}>:MCUBOOT_ROTPK_SIGN_POLICY>
 )
 
 target_link_libraries(bl2
@@ -192,31 +221,50 @@ if (PLATFORM_DEFAULT_IMAGE_SIGNING)
     add_custom_target(tfm_s_signed_bin
         SOURCES tfm_s_signed.bin
     )
+
+    set(wrapper_args
+        -v ${MCUBOOT_IMAGE_VERSION_S}
+        --layout $<TARGET_OBJECTS:signing_layout_s>
+        -k ${MCUBOOT_KEY_S}
+        --public-key-format $<IF:$<BOOL:${MCUBOOT_HW_KEY}>,full,hash>
+        --align ${MCUBOOT_ALIGN_VAL}
+        --pad
+        --pad-header
+        -H ${BL2_HEADER_SIZE}
+        -s ${MCUBOOT_SECURITY_COUNTER_S}
+        -L ${MCUBOOT_ENC_KEY_LEN}
+        -d \"\(1,${MCUBOOT_NS_IMAGE_MIN_VER}\)\"
+        $<$<STREQUAL:${MCUBOOT_UPGRADE_STRATEGY},OVERWRITE_ONLY>:--overwrite-only>
+        $<$<BOOL:${MCUBOOT_CONFIRM_IMAGE}>:--confirm>
+        $<$<BOOL:${MCUBOOT_ENC_IMAGES}>:-E${MCUBOOT_KEY_ENC}>
+        $<$<BOOL:${MCUBOOT_MEASURED_BOOT}>:--measured-boot-record>
+        $<TARGET_FILE_DIR:tfm_s>/tfm_s.bin
+        ${CMAKE_CURRENT_BINARY_DIR}/tfm_s_signed.bin
+    )
+
+    if(MCUBOOT_BUILTIN_KEY)
+        set(wrapper_args ${wrapper_args} --psa-key-ids ${TFM_S_KEY_ID})
+        if(MCUBOOT_IMAGE_MULTI_SIG_SUPPORT AND PLATFORM_DEFAULT_ROTPK)
+            set(wrapper_args ${wrapper_args} --psa-key-ids ${TFM_NS_KEY_ID})
+        endif()
+    endif()
+
+    if(MCUBOOT_IMAGE_MULTI_SIG_SUPPORT)
+        set(wrapper_args ${wrapper_args} -k ${MCUBOOT_KEY_NS})
+    endif()
+
+    get_target_property(bin_dir bl2 RUNTIME_OUTPUT_DIRECTORY)
+
     add_custom_command(OUTPUT tfm_s_signed.bin
+        OUTPUT ${bin_dir}/tfm_s_signed.bin
         DEPENDS tfm_s_bin signing_layout_s
         DEPENDS $<IF:$<BOOL:${MCUBOOT_GENERATE_SIGNING_KEYPAIR}>,generated_private_key,>
+        DEPENDS $<$<BOOL:${MCUBOOT_ENC_IMAGES}>:${MCUBOOT_KEY_ENC_NS}>
         WORKING_DIRECTORY ${MCUBOOT_PATH}/scripts
 
         #Sign secure binary image with provided secret key
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/wrapper/wrapper.py
-            -v ${MCUBOOT_IMAGE_VERSION_S}
-            --layout $<TARGET_OBJECTS:signing_layout_s>
-            -k ${MCUBOOT_KEY_S}
-            --public-key-format $<IF:$<BOOL:${MCUBOOT_HW_KEY}>,full,hash>
-            --align ${MCUBOOT_ALIGN_VAL}
-            --pad
-            --pad-header
-            -H ${BL2_HEADER_SIZE}
-            -s ${MCUBOOT_SECURITY_COUNTER_S}
-            -L ${MCUBOOT_ENC_KEY_LEN}
-            -d \"\(1,${MCUBOOT_NS_IMAGE_MIN_VER}\)\"
-            $<$<STREQUAL:${MCUBOOT_UPGRADE_STRATEGY},OVERWRITE_ONLY>:--overwrite-only>
-            $<$<BOOL:${MCUBOOT_CONFIRM_IMAGE}>:--confirm>
-            $<$<BOOL:${MCUBOOT_ENC_IMAGES}>:-E${MCUBOOT_KEY_ENC}>
-            $<$<BOOL:${MCUBOOT_MEASURED_BOOT}>:--measured-boot-record>
-            $<TARGET_FILE_DIR:tfm_s>/tfm_s.bin
-            ${CMAKE_CURRENT_BINARY_DIR}/tfm_s_signed.bin
-        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/tfm_s_signed.bin $<TARGET_FILE_DIR:bl2>
+        COMMAND  mcuboot_imagesign_wrapper ${wrapper_args}
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/tfm_s_signed.bin ${bin_dir}
     )
 
     set(IMAGE_TYPE "NS_IMAGE")
@@ -247,4 +295,11 @@ if (PLATFORM_DEFAULT_IMAGE_SIGNING)
         DEPENDS tfm_s_signed_bin
     )
 
+    add_convert_to_offset_hex_target(tfm_s_signed
+        INPUT_FILE          ${bin_dir}/tfm_s_signed.bin
+        OFFSET_MACRO_NAME   S_CODE_START
+        INCLUDE_BL2_HEADER  TRUE
+        MIRROR_FILE         $<TARGET_PROPERTY:tfm_s,LINK_DEPENDS>
+        OUTPUT_FILE         ${bin_dir}/tfm_s_signed.hex
+    )
 endif()

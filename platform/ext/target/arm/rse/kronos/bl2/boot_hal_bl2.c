@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2023, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -104,6 +104,10 @@ static struct flash_area *flash_map_slot_from_flash_area_id(uint32_t area_id)
 int boot_platform_pre_load(uint32_t image_id)
 {
     uuid_t uuid;
+    uint64_t image_load_phy_addr = 0;
+    uint32_t image_load_logical_addr = 0;
+    uint32_t image_max_size = 0;
+    uint64_t header_phy_addr = 0;
     uint32_t offsets[2];
     struct flash_area *flash_area_primary =
         flash_map_slot_from_flash_area_id(FLASH_AREA_IMAGE_PRIMARY(image_id));
@@ -115,16 +119,40 @@ int boot_platform_pre_load(uint32_t image_id)
         return 1;
     }
 
-    kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
+    fih_delay();
 
     switch(image_id) {
     case RSE_BL2_IMAGE_SCP:
         uuid = UUID_RSE_FIRMWARE_SCP_BL1;
+
+        image_load_phy_addr = SCP_BOOT_SRAM_BASE;
+        image_max_size = SCP_BOOT_SRAM_SIZE;
+        header_phy_addr = SCP_BOOT_SRAM_BASE + SCP_BOOT_SRAM_SIZE
+                                        - HOST_IMAGE_HEADER_SIZE;
+        image_load_logical_addr = HOST_BOOT_IMAGE1_LOAD_BASE_S;
+        host_flash_atu_setup_image_output_slots(image_load_phy_addr,
+                                                image_load_logical_addr,
+                                                image_max_size,
+                                                header_phy_addr);
         break;
     case RSE_BL2_IMAGE_AP:
         uuid = UUID_RSE_FIRMWARE_AP_BL1;
+
+        image_load_phy_addr = AP_BOOT_SRAM_BASE;
+        image_max_size = AP_BOOT_SRAM_SIZE;
+        header_phy_addr = AP_BOOT_SRAM_BASE + AP_BOOT_SRAM_SIZE
+                                        - HOST_IMAGE_HEADER_SIZE;
+        image_load_logical_addr = HOST_BOOT_IMAGE0_LOAD_BASE_S;
+        host_flash_atu_setup_image_output_slots(image_load_phy_addr,
+                                                image_load_logical_addr,
+                                                image_max_size,
+                                                header_phy_addr);
         break;
     case RSE_BL2_IMAGE_NS:
+        /*
+         * The IMAGE_NS's output slot can be accessed without ATU so the
+         * host_flash_atu_setup_image_output_slots doesn't have to be called.
+         */
 #ifndef RSE_XIP
         uuid = UUID_RSE_FIRMWARE_NS;
 #else
@@ -132,6 +160,10 @@ int boot_platform_pre_load(uint32_t image_id)
 #endif /* RSE_XIP */
         break;
     case RSE_BL2_IMAGE_S:
+        /*
+         * The IMAGE_S's output slot can be accessed without ATU so the
+         * host_flash_atu_setup_image_output_slots doesn't have to be called.
+         */
 #ifndef RSE_XIP
         uuid = UUID_RSE_FIRMWARE_S;
 #else
@@ -142,7 +174,7 @@ int boot_platform_pre_load(uint32_t image_id)
         return 1;
     }
 
-    rc = host_flash_atu_init_regions_for_image(uuid, offsets);
+    rc = host_flash_atu_setup_image_input_slots(uuid, offsets);
     if (rc) {
         return rc;
     }
@@ -179,15 +211,35 @@ int boot_platform_post_load(uint32_t image_id)
         }
         BOOT_LOG_INF("Got SCP BL1 started event");
 
+        err = atu_rse_free_addr(&ATU_DEV_S, HOST_BOOT_IMAGE1_LOAD_BASE_S);
+        if (err != ATU_ERR_NONE) {
+            return err;
+        }
+
+        err = atu_rse_free_addr(&ATU_DEV_S, HOST_BOOT_IMAGE1_LOAD_BASE_S + HOST_IMAGE_HEADER_SIZE);
+        if (err != ATU_ERR_NONE) {
+            return err;
+        }
+
     } else if (image_id == RSE_BL2_IMAGE_AP) {
         memset((void *)HOST_BOOT_IMAGE0_LOAD_BASE_S, 0, HOST_IMAGE_HEADER_SIZE);
         BOOT_LOG_INF("Telling SCP to start AP cores");
         mhu_v2_x_initiate_transfer(&MHU_RSE_TO_SCP_DEV);
         /* Slot 0 is used in the SCP protocol */
         mhu_v2_x_channel_send(&MHU_RSE_TO_SCP_DEV, 0, 1);
+
+        err = atu_rse_free_addr(&ATU_DEV_S, HOST_BOOT_IMAGE0_LOAD_BASE_S);
+        if (err != ATU_ERR_NONE) {
+            return err;
+        }
+
+        err = atu_rse_free_addr(&ATU_DEV_S, HOST_BOOT_IMAGE0_LOAD_BASE_S + HOST_IMAGE_HEADER_SIZE);
+        if (err != ATU_ERR_NONE) {
+            return err;
+        }
     }
 
-    err = host_flash_atu_uninit_regions();
+    err = host_flash_atu_free_input_image_regions();
     if (err) {
         return err;
     }
@@ -197,11 +249,11 @@ int boot_platform_post_load(uint32_t image_id)
 
 bool boot_platform_should_load_image(uint32_t image_id)
 {
-#ifndef RSE_LOAD_NS_IMAGE
+#ifndef TFM_LOAD_NS_IMAGE
     if (image_id == RSE_BL2_IMAGE_NS) {
         return false;
     }
-#endif /* RSE_LOAD_NS_IMAGE */
+#endif /* TFM_LOAD_NS_IMAGE */
 
     return true;
 }
@@ -256,7 +308,7 @@ void boot_platform_start_next_image(struct boot_arm_vector_table *vt)
     }
 #endif /* FLASH_DEV_NAME_SCRATCH */
 
-    kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
+    fih_delay();
 
 #if defined(__ARM_ARCH_8M_MAIN__) || defined(__ARM_ARCH_8M_BASE__) \
  || defined(__ARM_ARCH_8_1M_MAIN__)

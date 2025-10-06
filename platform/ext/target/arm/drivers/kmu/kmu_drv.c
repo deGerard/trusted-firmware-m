@@ -94,6 +94,11 @@ enum kmu_error_t kmu_init(struct kmu_dev_t *dev, uint8_t *prbg_seed)
     struct _kmu_reg_map_t* p_kmu = (struct _kmu_reg_map_t*)dev->cfg->base;
     uint32_t idx;
 
+    if (prbg_seed == NULL) {
+        FATAL_ERR(KMU_ERROR_NULL_POINTER);
+        return KMU_ERROR_NULL_POINTER;
+    }
+
     if ((uintptr_t)p_prgb_seed_word & (sizeof(uint32_t) - 1)) {
         FATAL_ERR(KMU_ERROR_INIT_INVALID_ALIGNMENT);
         return KMU_ERROR_INIT_INVALID_ALIGNMENT;
@@ -117,6 +122,11 @@ enum kmu_error_t kmu_get_key_export_config(struct kmu_dev_t *dev, uint32_t slot,
 {
     struct _kmu_reg_map_t* p_kmu = (struct _kmu_reg_map_t*)dev->cfg->base;
     enum kmu_error_t err;
+
+    if (config == NULL) {
+        FATAL_ERR(KMU_ERROR_NULL_POINTER);
+        return KMU_ERROR_NULL_POINTER;
+    }
 
     err = kmu_check_supported_slot(dev, slot);
     if (err != KMU_ERROR_NONE) {
@@ -151,6 +161,11 @@ enum kmu_error_t kmu_set_key_export_config(struct kmu_dev_t *dev, uint32_t slot,
 {
     struct _kmu_reg_map_t* p_kmu = (struct _kmu_reg_map_t*)dev->cfg->base;
     enum kmu_error_t err;
+
+    if (config == NULL) {
+        FATAL_ERR(KMU_ERROR_NULL_POINTER);
+        return KMU_ERROR_NULL_POINTER;
+    }
 
     err = kmu_check_supported_slot(dev, slot);
     if (err != KMU_ERROR_NONE) {
@@ -315,6 +330,11 @@ enum kmu_error_t kmu_set_key(struct kmu_dev_t *dev, uint32_t slot, uint8_t *key,
     uint32_t* p_key_word = (uint32_t*)key;
     size_t idx;
 
+    if (key == NULL) {
+        FATAL_ERR(KMU_ERROR_NULL_POINTER);
+        return KMU_ERROR_NULL_POINTER;
+    }
+
     if ((uintptr_t)key & (sizeof(uint32_t) - 1)) {
         FATAL_ERR(KMU_ERROR_SET_KEY_INVALID_ALIGNMENT);
         return KMU_ERROR_SET_KEY_INVALID_ALIGNMENT;
@@ -361,6 +381,11 @@ enum kmu_error_t kmu_get_key(struct kmu_dev_t *dev, uint32_t slot, uint8_t *buf,
     struct _kmu_reg_map_t* p_kmu = (struct _kmu_reg_map_t*)dev->cfg->base;
     uint32_t* p_buf_word = (uint32_t*)buf;
     size_t idx;
+
+    if (buf == NULL) {
+        FATAL_ERR(KMU_ERROR_NULL_POINTER);
+        return KMU_ERROR_NULL_POINTER;
+    }
 
     if ((uintptr_t)buf & (sizeof(uint32_t) - 1)) {
         FATAL_ERR(KMU_ERROR_GET_KEY_INVALID_ALIGNMENT);
@@ -498,4 +523,29 @@ enum kmu_error_t kmu_random_delay(struct kmu_dev_t *dev,
     }
 
     return KMU_ERROR_NONE;
+}
+
+enum kmu_error_t kmu_invalidate_hardware_keys(struct kmu_dev_t *dev)
+{
+    volatile enum kmu_error_t kmu_err;
+    volatile enum kmu_error_t return_kmu_err;
+    uint32_t success_count = 0;
+    uint32_t slot;
+
+    for (slot = 0; slot < KMU_USER_SLOT_MIN; slot++) {
+        kmu_err = KMU_ERROR_OPERATION_SKIPPED;
+        kmu_err = kmu_set_slot_invalid(dev, slot);
+        if (kmu_err == KMU_ERROR_NONE) {
+            success_count += 1;
+        } else {
+            return_kmu_err = KMU_ERROR_OPERATION_SKIPPED;
+            return_kmu_err = kmu_err;
+        }
+    }
+
+    if (success_count == KMU_USER_SLOT_MIN) {
+        return KMU_ERROR_NONE;
+    }
+
+    return return_kmu_err;
 }

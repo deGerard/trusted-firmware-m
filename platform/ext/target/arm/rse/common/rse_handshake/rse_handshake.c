@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024 Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * Licensed under the Apache License Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,8 +26,12 @@
 #include "cc3xx_rng.h"
 #include "cmsis.h"
 #include "dpa_hardened_word_copy.h"
+#include "rse_comms.h"
+#include "rse_get_rse_id.h"
+#include "bl1_random.h"
 
 #include <string.h>
+#include <assert.h>
 
 #define RSE_SERVER_ID            0
 #define SESSION_KEY_IV_SIZE      32
@@ -35,14 +39,12 @@
 #define VHUK_SEED_SIZE           32
 #define VHUK_SEED_WORD_SIZE      8
 
-uint32_t sending_mhu[RSE_AMOUNT];
-uint32_t receiving_mhu[RSE_AMOUNT];
-
 enum rse_handshake_msg_type {
     RSE_HANDSHAKE_SESSION_KEY_MSG,
     RSE_HANDSHAKE_SESSION_KEY_REPLY,
     RSE_HANDSHAKE_VHUK_MSG,
     RSE_HANDSHAKE_VHUK_REPLY,
+    RSE_HANDSHAKE_ERROR_REPLY,
     RSE_HANDSHAKE_MAX_MSG = UINT32_MAX,
 };
 
@@ -53,23 +55,12 @@ enum rse_handshake_crypt_type {
 
 __PACKED_STRUCT rse_handshake_header {
     enum rse_handshake_msg_type type;
-    uint32_t rse_id;
-    uint32_t ccm_iv[3];
-};
-
-__PACKED_STRUCT rse_handshake_trailer {
-    uint32_t ccm_tag[4];
+    uint32_t error;
 };
 
 struct __attribute__((__packed__)) rse_handshake_msg {
     struct rse_handshake_header header;
     __PACKED_UNION {
-        __PACKED_STRUCT {
-            uint32_t session_key_iv[SESSION_KEY_IV_WORD_SIZE];
-        } session_key_msg;
-        __PACKED_STRUCT {
-            uint32_t session_key_ivs[SESSION_KEY_IV_WORD_SIZE * RSE_AMOUNT];
-        } session_key_reply;
         __PACKED_STRUCT {
             uint32_t vhuk_contribution[VHUK_SEED_WORD_SIZE];
         } vhuk_msg;
@@ -77,46 +68,16 @@ struct __attribute__((__packed__)) rse_handshake_msg {
             uint32_t vhuk_contributions[VHUK_SEED_WORD_SIZE * RSE_AMOUNT];
         } vhuk_reply;
     } body;
-    struct rse_handshake_trailer trailer;
 };
+
+/* Can use the same buffer for the msg and reply. Specify the buffer size to the largest possible message */
+static __ALIGNED(4) uint8_t
+    rse_comms_buf[RSE_COMMS_BUFFER_MINIMUM_SIZE + sizeof(struct rse_handshake_msg)];
 
 static enum tfm_plat_err_t header_init(struct rse_handshake_msg *msg,
                                        enum rse_handshake_msg_type type)
 {
-    enum tfm_plat_err_t plat_err;
-    cc3xx_err_t cc_err;
-
     msg->header.type = type;
-
-    plat_err = tfm_plat_otp_read(PLAT_OTP_ID_RSE_ID,
-                                 sizeof(msg->header.rse_id),
-                                 (uint8_t*)&msg->header.rse_id);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
-    }
-
-    cc_err = cc3xx_lowlevel_rng_get_random((uint8_t *)&msg->header.ccm_iv,
-                                           sizeof(msg->header.ccm_iv),
-                                           CC3XX_RNG_DRBG);
-    if (cc_err != CC3XX_ERR_SUCCESS) {
-        return cc_err;
-    }
-
-    return TFM_PLAT_ERR_SUCCESS;
-}
-
-static enum tfm_plat_err_t construct_session_key_msg(struct rse_handshake_msg *msg,
-                                                     uint32_t *session_key_iv)
-{
-    enum tfm_plat_err_t plat_err;
-
-    plat_err = header_init(msg, RSE_HANDSHAKE_SESSION_KEY_MSG);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
-    }
-
-    dpa_hardened_word_copy(msg->body.session_key_msg.session_key_iv,
-                           session_key_iv, SESSION_KEY_IV_WORD_SIZE);
 
     return TFM_PLAT_ERR_SUCCESS;
 }
@@ -137,22 +98,6 @@ static enum tfm_plat_err_t construct_vhuk_msg(struct rse_handshake_msg *msg,
     return TFM_PLAT_ERR_SUCCESS;
 }
 
-static enum tfm_plat_err_t construct_session_key_reply(struct rse_handshake_msg *msg,
-                                                       uint32_t *session_key_ivs)
-{
-    enum tfm_plat_err_t plat_err;
-
-    plat_err = header_init(msg, RSE_HANDSHAKE_SESSION_KEY_REPLY);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
-    }
-
-    dpa_hardened_word_copy(msg->body.session_key_reply.session_key_ivs,
-                           session_key_ivs, SESSION_KEY_IV_WORD_SIZE * RSE_AMOUNT);
-
-    return TFM_PLAT_ERR_SUCCESS;
-}
-
 static enum tfm_plat_err_t construct_vhuk_reply(struct rse_handshake_msg *msg,
                                                 uint32_t *vhuk_seeds)
 {
@@ -169,148 +114,19 @@ static enum tfm_plat_err_t construct_vhuk_reply(struct rse_handshake_msg *msg,
     return TFM_PLAT_ERR_SUCCESS;
 }
 
-static enum tfm_plat_err_t rse_handshake_msg_crypt(cc3xx_aes_direction_t direction,
-                                                   struct rse_handshake_msg *msg)
-{
-    cc3xx_err_t cc_err;
-
-    cc_err = cc3xx_lowlevel_aes_init(direction, CC3XX_AES_MODE_CCM, RSE_KMU_SLOT_SESSION_KEY_0,
-                                     NULL, CC3XX_AES_KEYSIZE_256,
-                                     (uint32_t *)msg->header.ccm_iv, sizeof(msg->header.ccm_iv));
-    if (cc_err != CC3XX_ERR_SUCCESS) {
-        return cc_err;
-    }
-
-    cc3xx_lowlevel_aes_set_tag_len(sizeof(msg->trailer.ccm_tag));
-    cc3xx_lowlevel_aes_set_data_len(sizeof(msg->body),
-                                    sizeof(msg->header));
-
-    cc3xx_lowlevel_aes_update_authed_data((uint8_t *)msg,
-                                          sizeof(msg->header));
-
-    cc3xx_lowlevel_aes_set_output_buffer((uint8_t*)&msg->body,
-                                         sizeof(msg->body));
-
-    cc_err = cc3xx_lowlevel_aes_update((uint8_t*)&msg->body,
-                                       sizeof(msg->body));
-    if (cc_err != CC3XX_ERR_SUCCESS) {
-        return cc_err;
-    }
-
-    cc_err = cc3xx_lowlevel_aes_finish((uint32_t *)&msg->trailer.ccm_tag, NULL);
-    if (cc_err != CC3XX_ERR_SUCCESS) {
-        return cc_err;
-    }
-
-    return TFM_PLAT_ERR_SUCCESS;
-}
-
-static enum tfm_plat_err_t rse_handshake_msg_send(void *mhu_sender_dev,
-                                                  struct rse_handshake_msg *msg,
-                                                  enum rse_handshake_crypt_type crypt)
+static enum tfm_plat_err_t construct_failure_reply(struct rse_handshake_msg *msg,
+                                                   enum tfm_plat_err_t return_error)
 {
     enum tfm_plat_err_t plat_err;
-    enum mhu_error_t mhu_err;
 
-    mhu_err = mhu_init_sender(mhu_sender_dev);
-    if (mhu_err != MHU_ERR_NONE) {
-        return mhu_err;
-    }
-
-    if (crypt == RSE_HANDSHAKE_ENCRYPT_MESSAGE) {
-        plat_err = rse_handshake_msg_crypt(CC3XX_AES_DIRECTION_ENCRYPT, msg);
-        if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-            return plat_err;
-        }
-    }
-
-    mhu_err = mhu_send_data(mhu_sender_dev,
-                            (uint8_t *)msg,
-                            sizeof(struct rse_handshake_msg));
-    if (mhu_err != MHU_ERR_NONE) {
-        return mhu_err;
-    }
-
-    return TFM_PLAT_ERR_SUCCESS;
-}
-
-static enum tfm_plat_err_t rse_handshake_msg_receive(void *mhu_receiver_dev,
-                                                     struct rse_handshake_msg *msg,
-                                                     enum rse_handshake_crypt_type crypt)
-{
-    enum tfm_plat_err_t plat_err;
-    enum mhu_error_t mhu_err;
-    size_t size;
-
-    mhu_err = mhu_init_receiver(mhu_receiver_dev);
-    if (mhu_err != MHU_ERR_NONE) {
-        return mhu_err;
-    }
-
-    mhu_err = mhu_wait_data(mhu_receiver_dev);
-    if (mhu_err != MHU_ERR_NONE) {
-        return mhu_err;
-    }
-
-    size = sizeof(struct rse_handshake_msg);
-    mhu_err = mhu_receive_data(mhu_receiver_dev, (uint8_t*)msg, &size);
-    if (mhu_err != MHU_ERR_NONE) {
-        return mhu_err;
-    }
-
-    if (crypt == RSE_HANDSHAKE_ENCRYPT_MESSAGE) {
-        plat_err = rse_handshake_msg_crypt(CC3XX_AES_DIRECTION_DECRYPT, msg);
-        if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-            return plat_err;
-        }
-    }
-
-    return TFM_PLAT_ERR_SUCCESS;
-}
-
-static enum tfm_plat_err_t calculate_session_key_client(uint32_t rse_id)
-{
-    enum tfm_plat_err_t plat_err;
-    cc3xx_err_t cc_err;
-    uint32_t session_key_iv[SESSION_KEY_IV_WORD_SIZE];
-    struct rse_handshake_msg msg;
-
-    /* Calculate our session key */
-    cc_err = cc3xx_lowlevel_rng_get_random((uint8_t *)session_key_iv,
-                                           SESSION_KEY_IV_SIZE,
-                                           CC3XX_RNG_DRBG);
-    if (cc_err != CC3XX_ERR_SUCCESS) {
-        return cc_err;
-    }
-
-    /* Send our session key IV to the server */
-    plat_err = construct_session_key_msg(&msg, session_key_iv);
+    plat_err = header_init(msg, RSE_HANDSHAKE_ERROR_REPLY);
     if (plat_err != TFM_PLAT_ERR_SUCCESS) {
         return plat_err;
     }
 
-    plat_err = rse_handshake_msg_send(&MHU_RSE_TO_RSE_SENDER_DEVS[sending_mhu[RSE_SERVER_ID]],
-                                      &msg, RSE_HANDSHAKE_DONT_ENCRYPT_MESSAGE);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
-    }
+    msg->header.error = return_error;
 
-    /* Receive back the session key IVs */
-    plat_err = rse_handshake_msg_receive(&MHU_RSE_TO_RSE_RECEIVER_DEVS[receiving_mhu[RSE_SERVER_ID]],
-                                         &msg, RSE_HANDSHAKE_DONT_ENCRYPT_MESSAGE);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
-    }
-
-    if (msg.header.type != RSE_HANDSHAKE_SESSION_KEY_REPLY) {
-        return TFM_PLAT_ERR_RSE_HANDSHAKE_CLIENT_SESSION_INVALID_HEADER;
-    }
-
-    /* Finally construct the session key */
-    plat_err = rse_setup_session_key((uint8_t *)&msg.body.session_key_reply.session_key_ivs,
-                                      SESSION_KEY_IV_SIZE * RSE_AMOUNT);
-
-    return plat_err;
+    return TFM_PLAT_ERR_SUCCESS;
 }
 
 static enum tfm_plat_err_t exchange_vhuk_seeds_client(uint32_t rse_id, uint32_t *vhuk_seeds_buf)
@@ -318,40 +134,58 @@ static enum tfm_plat_err_t exchange_vhuk_seeds_client(uint32_t rse_id, uint32_t 
     enum tfm_plat_err_t plat_err;
     cc3xx_err_t cc_err;
     uint32_t vhuk_seed[VHUK_SEED_WORD_SIZE];
-    struct rse_handshake_msg msg;
+    struct rse_handshake_msg *rse_handshake_msg;
+    struct rse_comms_packet_t *msg;
+    size_t msg_size;
+    struct rse_comms_reply_metadata_t reply_metadata;
+    size_t payload_len;
+    enum rse_comms_error_t comms_err;
 
     /* Calculate our VHUK contribution key */
-    cc_err = cc3xx_lowlevel_rng_get_random((uint8_t *)vhuk_seed,
-                                           VHUK_SEED_SIZE,
-                                           CC3XX_RNG_DRBG);
+    cc_err = bl1_random_generate_secure((uint8_t *)vhuk_seed, VHUK_SEED_SIZE);
     if (cc_err != CC3XX_ERR_SUCCESS) {
         return cc_err;
     }
 
+    comms_err = rse_comms_init_msg(rse_comms_buf, sizeof(rse_comms_buf), RSE_SERVER_ID, 0, 0, true,
+                                   false, 0, (uint8_t **)&rse_handshake_msg, &payload_len, &msg,
+                                   &msg_size, &reply_metadata);
+    if (comms_err != RSE_COMMS_ERROR_SUCCESS) {
+        return (enum tfm_plat_err_t)comms_err;
+    }
+
+    if (payload_len < sizeof(*rse_handshake_msg)) {
+        return TFM_PLAT_ERR_RSE_HANDSHAKE_INVALID_PAYLOAD_LENGTH;
+    }
+
     /* Send our VHUK contribution to the server */
-    plat_err = construct_vhuk_msg(&msg, vhuk_seed);
+    plat_err = construct_vhuk_msg(rse_handshake_msg, vhuk_seed);
     if (plat_err != TFM_PLAT_ERR_SUCCESS) {
         return plat_err;
     }
 
-    plat_err = rse_handshake_msg_send(&MHU_RSE_TO_RSE_SENDER_DEVS[sending_mhu[RSE_SERVER_ID]],
-                                      &msg, RSE_HANDSHAKE_ENCRYPT_MESSAGE);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
+    comms_err = rse_comms_send_msg(msg, msg_size, sizeof(*rse_handshake_msg));
+    if (comms_err != RSE_COMMS_ERROR_SUCCESS) {
+        return (enum tfm_plat_err_t)comms_err;
     }
 
-    /* Receive back the VHUK contributions */
-    plat_err = rse_handshake_msg_receive(&MHU_RSE_TO_RSE_RECEIVER_DEVS[receiving_mhu[RSE_SERVER_ID]],
-                                         &msg, RSE_HANDSHAKE_ENCRYPT_MESSAGE);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
+    do {
+        comms_err = rse_comms_receive_reply(rse_comms_buf, sizeof(rse_comms_buf), reply_metadata,
+                                            (uint8_t **)&rse_handshake_msg, &payload_len);
+    } while (comms_err == RSE_COMMS_ERROR_NO_REPLY_AVAILABLE);
+    if (comms_err != RSE_COMMS_ERROR_SUCCESS) {
+        return (enum tfm_plat_err_t)comms_err;
     }
 
-    if (msg.header.type != RSE_HANDSHAKE_VHUK_REPLY) {
+    if (payload_len < sizeof(*rse_handshake_msg)) {
+        return TFM_PLAT_ERR_RSE_HANDSHAKE_INVALID_REPLY;
+    }
+
+    if (rse_handshake_msg->header.type != RSE_HANDSHAKE_VHUK_REPLY) {
         return TFM_PLAT_ERR_RSE_HANDSHAKE_CLIENT_VHUK_INVALID_HEADER;
     }
 
-    dpa_hardened_word_copy(vhuk_seeds_buf, msg.body.vhuk_reply.vhuk_contributions,
+    dpa_hardened_word_copy(vhuk_seeds_buf, rse_handshake_msg->body.vhuk_reply.vhuk_contributions,
                            VHUK_SEED_WORD_SIZE * RSE_AMOUNT);
     /* Overwrite our VHUK contribution in the array, in case the sender has
      * overwritten it.
@@ -366,139 +200,138 @@ static enum tfm_plat_err_t rse_handshake_client(uint32_t rse_id, uint32_t *vhuk_
 {
     enum tfm_plat_err_t plat_err;
 
-    plat_err = calculate_session_key_client(rse_id);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
-    }
-
     plat_err = exchange_vhuk_seeds_client(rse_id, vhuk_seeds_buf);
 
     return plat_err;
 }
 
-static enum tfm_plat_err_t calculate_session_key_server()
+static void server_reply_with_error(struct rse_comms_msg_metadata_t *msg_metadata,
+                                    enum tfm_plat_err_t return_err)
 {
+    enum rse_comms_error_t comms_error;
     enum tfm_plat_err_t plat_err;
-    cc3xx_err_t cc_err;
-    uint32_t idx;
-    uint32_t session_key_ivs[SESSION_KEY_IV_WORD_SIZE * RSE_AMOUNT];
-    struct rse_handshake_msg msg;
+    struct rse_handshake_msg *rse_handshake_msg;
+    struct rse_comms_packet_t *reply;
+    size_t reply_size;
+    size_t payload_len;
 
-    /* Calculate the session key for RSE 0 */
-    cc_err = cc3xx_lowlevel_rng_get_random((uint8_t *)session_key_ivs,
-                                           SESSION_KEY_IV_SIZE,
-                                           CC3XX_RNG_DRBG);
-    if (cc_err != CC3XX_ERR_SUCCESS) {
-        return cc_err;
+    comms_error = rse_comms_init_reply(rse_comms_buf, sizeof(rse_comms_buf), *msg_metadata,
+                                       (uint8_t **)&rse_handshake_msg, &payload_len, &reply,
+                                       &reply_size);
+    if (comms_error != RSE_COMMS_ERROR_SUCCESS) {
+        NONFATAL_ERR(comms_error);
+        return;
     }
 
-    /* Receive all the other session keys */
-    for (idx = 0; idx < RSE_AMOUNT; idx++) {
-        if (idx == RSE_SERVER_ID) {
-            continue;
-        }
-
-        memset(&msg, 0, sizeof(msg));
-        plat_err = rse_handshake_msg_receive(&MHU_RSE_TO_RSE_RECEIVER_DEVS[receiving_mhu[idx]],
-                                             &msg, RSE_HANDSHAKE_DONT_ENCRYPT_MESSAGE);
-        if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-            return plat_err;
-        }
-
-        if (msg.header.type != RSE_HANDSHAKE_SESSION_KEY_MSG) {
-            return TFM_PLAT_ERR_RSE_HANDSHAKE_SERVER_SESSION_INVALID_HEADER;
-        }
-
-        dpa_hardened_word_copy(session_key_ivs + (SESSION_KEY_IV_WORD_SIZE * idx),
-                               msg.body.session_key_msg.session_key_iv,
-                               SESSION_KEY_IV_WORD_SIZE);
+    if (payload_len < sizeof(*rse_handshake_msg)) {
+        NONFATAL_ERR(TFM_PLAT_ERR_RSE_HANDSHAKE_INVALID_PAYLOAD_LENGTH);
+        return;
     }
 
-    /* Construct the reply */
-    memset(&msg, 0, sizeof(msg));
-    plat_err = construct_session_key_reply(&msg, session_key_ivs);
+    plat_err = construct_failure_reply(rse_handshake_msg, return_err);
     if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
+        NONFATAL_ERR(plat_err);
+        return;
     }
 
-    /* Send the session key reply to all other RSEes */
-    for (idx = 0; idx < RSE_AMOUNT; idx++) {
-        if (idx == RSE_SERVER_ID) {
+    comms_error = rse_comms_send_reply(reply, reply_size, sizeof(*rse_handshake_msg));
+    if (comms_error != RSE_COMMS_ERROR_SUCCESS) {
+        NONFATAL_ERR(comms_error);
+        return;
+    }
+}
+
+static inline bool got_all_msgs_from_clients(bool *got_msg_from_client)
+{
+    for (size_t i = 0; i < RSE_AMOUNT; i++) {
+        if (i == RSE_SERVER_ID) {
             continue;
         }
 
-        plat_err = rse_handshake_msg_send(&MHU_RSE_TO_RSE_SENDER_DEVS[sending_mhu[idx]],
-                                          &msg, RSE_HANDSHAKE_DONT_ENCRYPT_MESSAGE);
-        if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-            return plat_err;
+        if (!got_msg_from_client[i]) {
+            return false;
         }
     }
 
-    /* Finally derive our own key */
-    plat_err = rse_setup_session_key((uint8_t *)session_key_ivs, sizeof(session_key_ivs));
-
-    return plat_err;
+    return true;
 }
 
 static enum tfm_plat_err_t exchange_vhuk_seeds_server(uint32_t *vhuk_seeds_buf)
 {
     enum tfm_plat_err_t plat_err;
-    uint32_t idx;
-    struct rse_handshake_msg msg;
+    struct rse_handshake_msg *rse_handshake_msg;
+    struct rse_comms_packet_t *reply;
+    size_t reply_size;
+    struct rse_comms_msg_metadata_t msg_metadata;
+    size_t payload_len;
+    enum rse_comms_error_t comms_err;
+    uint16_t client_id;
+    bool got_msg_from_client[RSE_AMOUNT] = { false };
 
     /* Receive all the other vhuk seeds */
-    for (idx = 0; idx < RSE_AMOUNT; idx++) {
-        if (idx == RSE_SERVER_ID) {
-            continue;
+    while (!got_all_msgs_from_clients(got_msg_from_client)) {
+        do {
+            comms_err = rse_comms_receive_msg(rse_comms_buf, sizeof(rse_comms_buf), true, 0, 0,
+                                              &client_id, (uint8_t **)&rse_handshake_msg,
+                                              &payload_len, &msg_metadata);
+        } while (comms_err == RSE_COMMS_ERROR_NO_MSG_AVAILABLE);
+        if (comms_err != RSE_COMMS_ERROR_SUCCESS) {
+            return (enum tfm_plat_err_t)comms_err;
         }
 
-        memset(&msg, 0, sizeof(msg));
-        plat_err = rse_handshake_msg_receive(&MHU_RSE_TO_RSE_RECEIVER_DEVS[receiving_mhu[idx]],
-                                        &msg, RSE_HANDSHAKE_ENCRYPT_MESSAGE);
-        if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-            return plat_err;
+        if (payload_len < sizeof(*rse_handshake_msg)) {
+            plat_err = TFM_PLAT_ERR_RSE_HANDSHAKE_INVALID_MESSAGE;
+            goto reply_with_error;
         }
 
-        if (msg.header.type != RSE_HANDSHAKE_VHUK_MSG) {
-            return TFM_PLAT_ERR_RSE_HANDSHAKE_SERVER_VHUK_INVALID_HEADER;
+        if (rse_handshake_msg->header.type != RSE_HANDSHAKE_VHUK_MSG) {
+            plat_err = TFM_PLAT_ERR_RSE_HANDSHAKE_SERVER_SESSION_INVALID_HEADER;
+            goto reply_with_error;
         }
 
-        dpa_hardened_word_copy(vhuk_seeds_buf + (SESSION_KEY_IV_WORD_SIZE * idx),
-                               msg.body.vhuk_msg.vhuk_contribution,
+        dpa_hardened_word_copy(vhuk_seeds_buf + (SESSION_KEY_IV_WORD_SIZE * msg_metadata.sender),
+                               rse_handshake_msg->body.vhuk_msg.vhuk_contribution,
                                VHUK_SEED_WORD_SIZE);
-    }
 
-    /* Construct the reply */
-    memset(&msg, 0, sizeof(msg));
-    plat_err = construct_vhuk_reply(&msg, vhuk_seeds_buf);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
-    }
-
-    /* Send the VUHK reply to all other RSEes */
-    for (idx = 0; idx < RSE_AMOUNT; idx++) {
-        if (idx == RSE_SERVER_ID) {
-            continue;
+        comms_err = rse_comms_init_reply(rse_comms_buf, sizeof(rse_comms_buf), msg_metadata,
+                                         (uint8_t **)&rse_handshake_msg, &payload_len, &reply,
+                                         &reply_size);
+        if (comms_err != RSE_COMMS_ERROR_SUCCESS) {
+            plat_err = (enum tfm_plat_err_t)comms_err;
+            goto reply_with_error;
         }
 
-        plat_err = rse_handshake_msg_send(&MHU_RSE_TO_RSE_SENDER_DEVS[sending_mhu[idx]],
-                                          &msg, RSE_HANDSHAKE_ENCRYPT_MESSAGE);
+        if (payload_len < sizeof(*rse_handshake_msg)) {
+            plat_err = TFM_PLAT_ERR_RSE_HANDSHAKE_INVALID_PAYLOAD_LENGTH;
+            goto reply_with_error;
+        }
+
+        memset(rse_handshake_msg, 0, sizeof(*rse_handshake_msg));
+        plat_err = construct_vhuk_reply(rse_handshake_msg, vhuk_seeds_buf);
         if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-            return plat_err;
+            goto reply_with_error;
         }
+
+        comms_err = rse_comms_send_reply(reply, reply_size, sizeof(*rse_handshake_msg));
+        if (comms_err != RSE_COMMS_ERROR_SUCCESS) {
+            return (enum tfm_plat_err_t)comms_err;
+        }
+
+        got_msg_from_client[msg_metadata.sender] = true;
     }
 
     return TFM_PLAT_ERR_SUCCESS;
+
+reply_with_error:
+    /* Ignore failures when attempting to reply with error as we have
+     * failed at this point anyway */
+    server_reply_with_error(&msg_metadata, plat_err);
+    return plat_err;
 }
 
 static enum tfm_plat_err_t rse_handshake_server(uint32_t *vhuk_seeds_buf)
 {
     enum tfm_plat_err_t plat_err;
-
-    plat_err = calculate_session_key_server();
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
-    }
 
     plat_err = exchange_vhuk_seeds_server(vhuk_seeds_buf);
     if (plat_err != TFM_PLAT_ERR_SUCCESS) {
@@ -510,29 +343,18 @@ static enum tfm_plat_err_t rse_handshake_server(uint32_t *vhuk_seeds_buf)
 
 enum tfm_plat_err_t rse_handshake(uint32_t *vhuk_seeds_buf)
 {
-#ifndef RSE_OTP_HAS_ROUTING_TABLES
-    /* The handshake can't be supported without routing tables in OTP */
-    return TFM_PLAT_ERR_UNSUPPORTED;
-#else
     uint32_t rse_id;
     enum tfm_plat_err_t plat_err;
+    enum rse_comms_error_t comms_err;
 
-    plat_err = tfm_plat_otp_read(PLAT_OTP_ID_RSE_TO_RSE_SENDER_ROUTING_TABLE,
-                                 sizeof(sending_mhu), (uint8_t *)sending_mhu);
+    plat_err = rse_get_rse_id(&rse_id);
     if (plat_err != TFM_PLAT_ERR_SUCCESS) {
         return plat_err;
     }
 
-    plat_err = tfm_plat_otp_read(PLAT_OTP_ID_RSE_TO_RSE_RECEIVER_ROUTING_TABLE,
-                                 sizeof(receiving_mhu), (uint8_t *)receiving_mhu);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
-    }
-
-    plat_err = tfm_plat_otp_read(PLAT_OTP_ID_RSE_ID, sizeof(rse_id),
-                                 (uint8_t*)&rse_id);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
+    comms_err = rse_comms_init();
+    if (comms_err != RSE_COMMS_ERROR_SUCCESS) {
+        return (enum tfm_plat_err_t)comms_err;
     }
 
     if (rse_id == RSE_SERVER_ID) {
@@ -544,5 +366,4 @@ enum tfm_plat_err_t rse_handshake(uint32_t *vhuk_seeds_buf)
     } else {
         return rse_handshake_client(rse_id, vhuk_seeds_buf);
     }
-#endif /* RSE_OTP_HAS_ROUTING_TABLES */
 }

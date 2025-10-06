@@ -21,10 +21,21 @@ def _round_up(x, boundary):
     return ((x + (boundary - 1)) // boundary) * boundary
 
 class dcsu_tx_command(Enum):
+    DCSU_TX_COMMAND_GENERATE_SOC_UNIQUE_ID = 0x1
+    DCSU_TX_COMMAND_WRITE_SOC_FAMILY_ID = 0x2
+    DCSU_TX_COMMAND_WRITE_SOC_IEEE_ECID = 0x3
+    DCSU_TX_COMMAND_COMPUTE_ZC_SOC_IDS = 0x4
+    DCSU_TX_COMMAND_READ_SOC_FAMILY_ID = 0x5
+    DCSU_TX_COMMAND_READ_SOC_IEEE_ECID = 0x6
+    DCSU_TX_COMMAND_WRITE_SOC_CONFIG_DATA = 0x7
+    DCSU_TX_COMMAND_COMPUTE_ZC_SOC_CFG = 0x8
+    DCSU_TX_COMMAND_READ_SOC_CONFIG_DATA = 0x9
     DCSU_TX_COMMAND_IMPORT_DATA_NO_CHECKSUM = 0xA
     DCSU_TX_COMMAND_IMPORT_DATA_CHECKSUM = 0xB
     DCSU_TX_COMMAND_COMPLETE_IMPORT_DATA = 0xC
     DCSU_TX_COMMAND_CANCEL_IMPORT_DATA_WITH_CHECKSUM = 0xD
+    DCSU_TX_COMMAND_READ_COD_DATA = 0xE
+    DCSU_TX_COMMAND_READ_EC_PARAMS = 0xF
 
 class dcsu_rx_command(Enum):
     DCSU_RX_COMMAND_IMPORT_READY = 0x1
@@ -48,6 +59,7 @@ class dcsu_tx_message_error(Enum):
     DCSU_TX_MSG_RESP_UNEXPECTED_NUMBER_OF_WORDS = 0xB
     DCSU_TX_MSG_RESP_UNEXPECTED_IMPORT = 0xC
     DCSU_TX_MSG_RESP_RANGE_NOT_INITIALIZED = 0xD
+    DCSU_TX_MSG_RESP_GENERIC_ERROR = 0xFE
     DCSU_TX_MSG_RESP_INVALID_COMMAND = 0xFF
 
 class dcsu_rx_message_error(Enum):
@@ -75,6 +87,10 @@ def tx_command_send(backend, ctx, command : dcsu_tx_command, data : bytes = None
         data_words = [int.from_bytes(b, byteorder=byteorder) for b in _chunk_bytes(data, 4)]
 
         assert (len(data_words) <= 4), "Data too large"
+
+        if (size is not None):
+            assert (len(data_words) == size), "Size does not match data"
+
         command_word |= ((len(data_words) - 1) & 0b11) << 8
 
         for r,w in zip(["DIAG_RX_DATA{}".format(i) for i in range(len(data_words))], data_words):
@@ -100,6 +116,15 @@ def tx_command_send(backend, ctx, command : dcsu_tx_command, data : bytes = None
     logger.info("Received response {}".format(response))
 
     return response
+
+def tx_command_read_data(backend, ctx, size, byteorder='little'):
+
+    data_words = []
+
+    for r in ["DIAG_TX_DATA{}".format(i) for i in range(size)]:
+        data_words.append(backend.read_register(ctx, r))
+
+    return b''.join([word.to_bytes(length=4, byteorder=byteorder) for word in data_words])
 
 def rx_wait_for_command(backend, ctx, command : dcsu_rx_command):
     logger.info("Waiting for command {}".format(command.name))
@@ -150,7 +175,59 @@ def _get_data_from_args(args:argparse.Namespace) -> bytes:
 
     return data_bytes
 
+def dcsu_tx_command_generate_soc_unique_id(backend, ctx, args: argparse.Namespace):
+    return tx_command_send(backend, ctx, dcsu_tx_command.DCSU_TX_COMMAND_GENERATE_SOC_UNIQUE_ID)
 
+def dcsu_tx_command_write_family_id(backend, ctx, args: argparse.Namespace):
+    data = _get_data_from_args(args)
+    return tx_command_send(backend, ctx, dcsu_tx_command.DCSU_TX_COMMAND_WRITE_SOC_FAMILY_ID, data=data, byteorder=args.byte_order)
+
+def dcsu_tx_command_write_ieee_ecid(backend, ctx, args: argparse.Namespace):
+    data = _get_data_from_args(args)
+    return tx_command_send(backend, ctx, dcsu_tx_command.DCSU_TX_COMMAND_WRITE_SOC_IEEE_ECID, data=data, byteorder=args.byte_order)
+
+def dcsu_tx_command_compute_zc_soc_id(backend, ctx, args: argparse.Namespace):
+    return tx_command_send(backend, ctx, dcsu_tx_command.DCSU_TX_COMMAND_COMPUTE_ZC_SOC_IDS)
+
+def dcsu_tx_command_read_family_id(backend, ctx, args: argparse.Namespace):
+    res = tx_command_send(backend, ctx, dcsu_tx_command.DCSU_TX_COMMAND_READ_SOC_FAMILY_ID, size=1, byteorder=args.byte_order)
+    time.sleep(0.1)
+    if res == dcsu_tx_message_error.DCSU_TX_MSG_RESP_SUCCESS:
+        data = tx_command_read_data(backend, ctx, 1, byteorder=args.byte_order)
+        return res, data
+    return res, None
+
+def dcsu_tx_command_read_ieee_ecid(backend, ctx, args: argparse.Namespace):
+    res = tx_command_send(backend, ctx, dcsu_tx_command.DCSU_TX_COMMAND_READ_SOC_IEEE_ECID, size=4, byteorder=args.byte_order)
+    time.sleep(0.1)
+    if res == dcsu_tx_message_error.DCSU_TX_MSG_RESP_SUCCESS:
+        data = tx_command_read_data(backend, ctx, 4, byteorder=args.byte_order)
+        return res, data
+    return res, None
+
+def dcsu_tx_command_write_soc_cfg_data(backend, ctx, args: argparse.Namespace):
+    offset = int(args.offset, 0)
+    backend.write_register(ctx, "DIAG_RX_LARGE_PARAM", offset)
+
+    data = _get_data_from_args(args)
+
+    return tx_command_send(backend, ctx, dcsu_tx_command.DCSU_TX_COMMAND_WRITE_SOC_CONFIG_DATA, data=data, byteorder=args.byte_order)
+
+def dcsu_tx_command_compute_zc_soc_cfg(backend, ctx, args: argparse.Namespace):
+    return tx_command_send(backend, ctx, dcsu_tx_command.DCSU_TX_COMMAND_COMPUTE_ZC_SOC_CFG)
+
+def dcsu_tx_command_read_soc_cfg_data(backend, ctx, args: argparse.Namespace):
+    offset = int(args.offset, 0)
+    backend.write_register(ctx, "DIAG_RX_LARGE_PARAM", offset)
+
+    size = int(args.size, 0)
+
+    res = tx_command_send(backend, ctx, dcsu_tx_command.DCSU_TX_COMMAND_READ_SOC_CONFIG_DATA, size=size, byteorder=args.byte_order)
+    time.sleep(0.1)
+    if res == dcsu_tx_message_error.DCSU_TX_MSG_RESP_SUCCESS:
+        data = tx_command_read_data(backend, ctx, size, byteorder=args.byte_order)
+        return res, data
+    return res, None
 
 def dcsu_tx_command_import_data(backend, ctx, args: argparse.Namespace, checksum=False):
     offset = int(args.offset, 0)
@@ -241,6 +318,32 @@ def dcsu_tx_command_complete_import(backend, ctx, args: argparse.Namespace):
 def dcsu_tx_command_cancel_import(backend, ctx, args: argparse.Namespace):
     return tx_command_send(backend, ctx, dcsu_tx_command.DCSU_TX_COMMAND_CANCEL_IMPORT_DATA_WITH_CHECKSUM)
 
+def dcsu_tx_command_read_cod_data(backend, ctx, args: argparse.Namespace):
+    offset = int(args.offset, 0)
+    backend.write_register(ctx, "DIAG_RX_LARGE_PARAM", offset)
+
+    size = int(args.size, 0)
+
+    res = tx_command_send(backend, ctx, dcsu_tx_command.DCSU_TX_COMMAND_READ_COD_DATA, size=size, byteorder=args.byte_order)
+    time.sleep(0.1)
+    if res == dcsu_tx_message_error.DCSU_TX_MSG_RESP_SUCCESS:
+        data = tx_command_read_data(backend, ctx, size, byteorder=args.byte_order)
+        return res, data
+    return res, None
+
+def dcsu_tx_command_read_ec_params(backend, ctx, args: argparse.Namespace):
+    offset = int(args.offset, 0)
+    backend.write_register(ctx, "DIAG_RX_LARGE_PARAM", offset)
+
+    size = int(args.size, 0)
+
+    res = tx_command_send(backend, ctx, dcsu_tx_command.DCSU_TX_COMMAND_READ_EC_PARAMS, size=size, byteorder=args.byte_order)
+    time.sleep(0.1)
+    if res == dcsu_tx_message_error.DCSU_TX_MSG_RESP_SUCCESS:
+        data = tx_command_read_data(backend, ctx, size, byteorder=args.byte_order)
+        return res, data
+    return res, None
+
 def dcsu_rx_command_import_ready(backend, ctx, args: argparse.Namespace):
     rx_command_receive(backend, ctx, dcsu_rx_command.DCSU_RX_COMMAND_IMPORT_READY)
     return 0
@@ -269,10 +372,21 @@ def dcsu_rx_command_export_data(backend, ctx, args: argparse.Namespace):
 def dcsu_command(backend, ctx, command, args: argparse.Namespace):
 
     dcsu_command_handlers = {
+        dcsu_tx_command.DCSU_TX_COMMAND_GENERATE_SOC_UNIQUE_ID: dcsu_tx_command_generate_soc_unique_id,
+        dcsu_tx_command.DCSU_TX_COMMAND_WRITE_SOC_FAMILY_ID: dcsu_tx_command_write_family_id,
+        dcsu_tx_command.DCSU_TX_COMMAND_WRITE_SOC_IEEE_ECID: dcsu_tx_command_write_ieee_ecid,
+        dcsu_tx_command.DCSU_TX_COMMAND_COMPUTE_ZC_SOC_IDS: dcsu_tx_command_compute_zc_soc_id,
+        dcsu_tx_command.DCSU_TX_COMMAND_READ_SOC_FAMILY_ID: dcsu_tx_command_read_family_id,
+        dcsu_tx_command.DCSU_TX_COMMAND_READ_SOC_IEEE_ECID: dcsu_tx_command_read_ieee_ecid,
+        dcsu_tx_command.DCSU_TX_COMMAND_WRITE_SOC_CONFIG_DATA: dcsu_tx_command_write_soc_cfg_data,
+        dcsu_tx_command.DCSU_TX_COMMAND_COMPUTE_ZC_SOC_CFG: dcsu_tx_command_compute_zc_soc_cfg,
+        dcsu_tx_command.DCSU_TX_COMMAND_READ_SOC_CONFIG_DATA: dcsu_tx_command_read_soc_cfg_data,
         dcsu_tx_command.DCSU_TX_COMMAND_IMPORT_DATA_NO_CHECKSUM: dcsu_tx_command_import_data_no_checksum,
         dcsu_tx_command.DCSU_TX_COMMAND_IMPORT_DATA_CHECKSUM: dcsu_tx_command_import_data_checksum,
         dcsu_tx_command.DCSU_TX_COMMAND_COMPLETE_IMPORT_DATA: dcsu_tx_command_complete_import,
         dcsu_tx_command.DCSU_TX_COMMAND_CANCEL_IMPORT_DATA_WITH_CHECKSUM: dcsu_tx_command_cancel_import,
+        dcsu_tx_command.DCSU_TX_COMMAND_READ_COD_DATA: dcsu_tx_command_read_cod_data,
+        dcsu_tx_command.DCSU_TX_COMMAND_READ_EC_PARAMS: dcsu_tx_command_read_ec_params,
         dcsu_rx_command.DCSU_RX_COMMAND_IMPORT_READY: dcsu_rx_command_import_ready,
         dcsu_rx_command.DCSU_RX_COMMAND_REPORT_STATUS: dcsu_rx_command_report_status,
         dcsu_rx_command.DCSU_RX_COMMAND_EXPORT_DATA_NO_CHECKSUM: dcsu_rx_command_export_data,
@@ -290,6 +404,42 @@ amounts of data)
 """
 
 command_description = {
+    "DCSU_TX_COMMAND_GENERATE_SOC_UNIQUE_ID": """
+The DCSU_TX_COMMAND_GENERATE_SOC_UNIQUE_ID command triggers the DCSU to
+generate the SOC unique ID and write its zero count.
+""",
+    "DCSU_TX_COMMAND_WRITE_SOC_FAMILY_ID": """
+The DCSU_TX_COMMAND_WRITE_SOC_FAMILY_ID command to write input data to the SOC
+Family ID.
+""",
+    "DCSU_TX_COMMAND_WRITE_SOC_IEEE_ECID": """
+The DCSU_TX_COMMAND_WRITE_SOC_IEEE_ECID command to write input data to the SOC
+IEEE ECID.
+""",
+    "DCSU_TX_COMMAND_COMPUTE_ZC_SOC_IDS": """
+The DCSU_TX_COMMAND_COMPUTE_ZC_SOC_IDS command compute and write zero count for
+the SOC Family ID and SOC IEEE ECID.
+""",
+    "DCSU_TX_COMMAND_READ_SOC_FAMILY_ID": """
+The DCSU_TX_COMMAND_READ_SOC_FAMILY_ID command to read data from the SOC Family
+ID.
+""",
+    "DCSU_TX_COMMAND_READ_SOC_IEEE_ECID": """
+The DCSU_TX_COMMAND_READ_SOC_IEEE_ECID command to read data from the SOC IEEE
+ECID.
+""",
+    "DCSU_TX_COMMAND_WRITE_SOC_CONFIG_DATA": """
+The DCSU_TX_COMMAND_WRITE_SOC_CONFIG_DATA command write the input data at the
+input offset in the SOC CFG OTP area.
+""",
+    "DCSU_TX_COMMAND_COMPUTE_ZC_SOC_CFG": """
+The DCSU_TX_COMMAND_COMPUTE_ZC_SOC_CFG command calculates the zero count of
+input start offset to input size before writing to input zero count offset.
+""",
+    "DCSU_TX_COMMAND_READ_SOC_CONFIG_DATA": """
+The DCSU_TX_COMMAND_READ_SOC_CONFIG_DATA command read the data from the input
+offset in the SOC CFG OTP area.
+""",
     "DCSU_TX_COMMAND_IMPORT_DATA_NO_CHECKSUM": """
 The DCSU_TX_COMMAND_IMPORT_DATA_NO_CHECKSUM command writes data to the DCSU TX
 data buffer. This command may trigger multiple commands in order to copy more
@@ -329,6 +479,14 @@ the DCSU TX buffer size.
 The DCSU_RX_COMMAND_COMPLETE_EXPORT_DATA command indicates to the DCSU that the export has
 completed and that the data can be returned from the script.
 """,
+    "DCSU_TX_COMMAND_READ_COD_DATA": """
+The DCSU_TX_COMMAND_READ_COD_DATA command reads the data from the input
+offset in the COD OTP area.
+""",
+    "DCSU_TX_COMMAND_READ_EC_PARAMS": """
+The DCSU_TX_COMMAND_READ_EC_PARAMS command reads the data from the input
+offset in the endorsement certificate and params area.
+""",
 }
 if __name__ == "__main__":
     backend_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "backends")
@@ -345,18 +503,40 @@ if __name__ == "__main__":
 
     parsers = {x : subparsers.add_parser(x, description=command_description[x]) for x in dcsu_tx_command._member_names_ + dcsu_rx_command._member_names_}
 
-    for c in ["DCSU_TX_COMMAND_IMPORT_DATA_NO_CHECKSUM",
+    for c in ["DCSU_TX_COMMAND_WRITE_SOC_CONFIG_DATA",
+              "DCSU_TX_COMMAND_IMPORT_DATA_NO_CHECKSUM",
               "DCSU_TX_COMMAND_IMPORT_DATA_CHECKSUM"]:
         parsers[c].add_argument("--offset", help="Offset to write", required=True, default="0")
 
-    for c in ["DCSU_TX_COMMAND_IMPORT_DATA_NO_CHECKSUM",
+    for c in ["DCSU_TX_COMMAND_READ_SOC_CONFIG_DATA",
+              "DCSU_TX_COMMAND_READ_COD_DATA",
+              "DCSU_TX_COMMAND_READ_EC_PARAMS"]:
+        parsers[c].add_argument("--offset", help="Offset to read", required=True, default="0")
+
+    for c in ["DCSU_TX_COMMAND_WRITE_SOC_FAMILY_ID",
+              "DCSU_TX_COMMAND_WRITE_SOC_IEEE_ECID",
+              "DCSU_TX_COMMAND_WRITE_SOC_CONFIG_DATA",
+              "DCSU_TX_COMMAND_IMPORT_DATA_NO_CHECKSUM",
               "DCSU_TX_COMMAND_IMPORT_DATA_CHECKSUM"]:
         mgroup = parsers[c].add_mutually_exclusive_group(required=True)
         mgroup.add_argument("--data",   help="Data to write", default="0x00")
         mgroup.add_argument("--data-file",   help="Data file to load and write")
 
-    for c in ["DCSU_TX_COMMAND_IMPORT_DATA_NO_CHECKSUM",
-              "DCSU_TX_COMMAND_IMPORT_DATA_CHECKSUM"]:
+    for c in ["DCSU_TX_COMMAND_READ_SOC_CONFIG_DATA",
+              "DCSU_TX_COMMAND_READ_COD_DATA",
+              "DCSU_TX_COMMAND_READ_EC_PARAMS"]:
+        parsers[c].add_argument("--size", help="Size (in number of words) to read", required=True, default="4")
+
+    for c in ["DCSU_TX_COMMAND_WRITE_SOC_FAMILY_ID",
+              "DCSU_TX_COMMAND_WRITE_SOC_IEEE_ECID",
+              "DCSU_TX_COMMAND_WRITE_SOC_CONFIG_DATA",
+              "DCSU_TX_COMMAND_IMPORT_DATA_NO_CHECKSUM",
+              "DCSU_TX_COMMAND_IMPORT_DATA_CHECKSUM",
+              "DCSU_TX_COMMAND_READ_SOC_FAMILY_ID",
+              "DCSU_TX_COMMAND_READ_SOC_IEEE_ECID",
+              "DCSU_TX_COMMAND_READ_SOC_CONFIG_DATA",
+              "DCSU_TX_COMMAND_READ_COD_DATA",
+              "DCSU_TX_COMMAND_READ_EC_PARAMS"]:
         parsers[c].add_argument("--byte-order", help="Byte order of data", default="little")
 
     backend_name = pre_parse_backend(backends, parser)
@@ -375,7 +555,7 @@ if __name__ == "__main__":
         if "_RX_" in args.command:
             command = dcsu_rx_command[args.command]
             logger.info(f"res: {hex(dcsu_command(backend, ctx, command, args))}")
-            exit(0)
+            sys.exit(0)
         else:
             command = dcsu_tx_command[args.command]
             match dcsu_command(backend, ctx, command, args):
@@ -383,6 +563,6 @@ if __name__ == "__main__":
                     logger.info(f"res {output}: {data.hex() if data is not None else data}")
                 case output:
                     logger.info(f"res {output}")
-            exit(0 if output == dcsu_tx_message_error.DCSU_TX_MSG_RESP_SUCCESS else output.value)
+            sys.exit(0 if output == dcsu_tx_message_error.DCSU_TX_MSG_RESP_SUCCESS else output.value)
     except KeyboardInterrupt:
-        exit(1)
+        sys.exit(1)

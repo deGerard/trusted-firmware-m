@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -14,7 +14,7 @@
 #include "t_cose/q_useful_buf.h"
 #ifdef TFM_PARTITION_MEASURED_BOOT
 #include "measured_boot_api.h"
-#include "boot_measurement.h"
+#include "tfm_boot_measurement.h"
 #include "psa/crypto.h"
 #endif /* TFM_PARTITION_MEASURED_BOOT */
 
@@ -71,6 +71,7 @@ get_measurement_description(psa_algorithm_t algorithm,
     case PSA_ALG_SHA_384:
         measurement_desc->ptr = "sha-384";
         measurement_desc->len = 7; /* Not including the null-terminator. */
+        break;
     case PSA_ALG_SHA_512:
         measurement_desc->ptr = "sha-512";
         measurement_desc->len = 7; /* Not including the null-terminator. */

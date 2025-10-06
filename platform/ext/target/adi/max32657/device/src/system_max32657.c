@@ -111,7 +111,7 @@ void SystemInit(void)
      *
      *  Note: ARMv8-M without the Main Extension disables unaligned access by default.
      */
-#if defined(UNALIGNED_SUPPORT_DISABLE) || defined(__ARM_FEATURE_UNALIGNED)
+#if defined(UNALIGNED_SUPPORT_DISABLE)
     SCB->CCR |= SCB_CCR_UNALIGN_TRP_Msk;
 #endif
 
@@ -133,12 +133,13 @@ void SystemInit(void)
 #if CONFIG_TRUSTED_EXECUTION_SECURE
     /* Init peripherals */
     PeripheralInit();
+    MXC_SYS_ClockEnable(MXC_SYS_PERIPH_CLOCK_TRNG);
 #endif
 
     /*
      * FPCA bit of CONTROL register can be enabled while
      * performing floating point operation in Secure domain.
-     * It will trigger fault if it is not  cleared before
+     * It will trigger fault if it is not cleared before
      * switching to Non-secure domain.
      * Hence, clearing FPCA bit during initialization firmware
      */

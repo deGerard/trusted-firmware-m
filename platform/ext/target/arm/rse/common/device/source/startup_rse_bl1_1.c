@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2024 Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -20,17 +20,13 @@
  * This file is derivative of CMSIS V5.9.0 startup_ARMCM55.c
  * Git SHA: 2b7495b8535bdcb306dac29b9ded4cfb679d7e5c
  */
-
-#include "tfm_hal_device_header.h"
-#include "device_definition.h"
-#include "region_defs.h"
-#include "rse_kmu_slot_ids.h"
-#include "rse_persistent_data.h"
-#include "trng.h"
-#if defined(RSE_ENABLE_TRAM)
-#include "uart_stdout.h"
-#endif
+#include "platform_base_address.h"
 #include "sam_interrupts.h"
+#include "tfm_hal_device_header.h"
+#include "region_defs.h"
+#include "rse_gretreg.h"
+
+#include <stdint.h>
 
 /*----------------------------------------------------------------------------
   External References
@@ -199,88 +195,160 @@ extern const VECTOR_TABLE_Type __VECTOR_TABLE[];
 #pragma GCC diagnostic pop
 #endif
 
-#ifdef RSE_ENABLE_TRAM
-/*
- * This can't be inlined, since the stack push to get space for the local
- * variables is done at the start of the function, and the function which calls
- * this includes an explicit stack set which removes the space allocated for
- * locals.
- */
-static void __attribute__ ((noinline)) setup_tram_encryption(void) {
-    enum lcm_bool_t sp_enabled;
-    enum lcm_lcs_t lcs;
-    uint32_t random_word;
-    uint32_t idx;
-    uint8_t tram_key[32];
-    uint8_t prbg_seed[KMU_PRBG_SEED_LEN];
+static uint32_t tram_key_prefill_value;
+static uint32_t tram_erase_value;
+static uint32_t tram_key[8];
 
-    const struct kmu_key_export_config_t tram_key_export_config = {
-        .export_address = TRAM_BASE_S + 0x8, /* TRAM key register */
-        .destination_port_write_delay = 0, /* No delay */
-        .destination_port_address_increment = 0x01, /* Increment by 4 bytes with each write */
-        .destination_port_data_width_code = KMU_DESTINATION_PORT_WIDTH_32_BITS, /* Write 32 bits with each write */
-        .destination_port_data_writes_code = KMU_DESTINATION_PORT_WIDTH_8_WRITES, /* Perform 8 writes (total 256 bits) */
-        .new_mask_for_next_key_writes = true,  /* refresh the masking */
-        .write_mask_disable = false, /* Don't disable the masking */
-    };
+static inline void __attribute__ ((always_inline)) setup_tram_encryption(void)
+{
+    register uint32_t tram_key_erase_value __asm("r0");
 
-    /* Redefine these, as at this point the constants haven't been loaded */
-    struct kmu_dev_cfg_t kmu_dev_cfg_s = {
-        .base = KMU_BASE_S
-    };
-    struct kmu_dev_t kmu_dev_s = {
-        .cfg = &(kmu_dev_cfg_s)
-    };
-    struct tram_dev_cfg_t tram_dev_cfg_s = {
-    .base = TRAM_BASE_S
-    };
-    struct tram_dev_t tram_dev_s = {&tram_dev_cfg_s};
-    struct lcm_dev_cfg_t lcm_dev_cfg_s = {
-    .base = LCM_BASE_S
-    };
-    struct lcm_dev_t lcm_dev_s = {&lcm_dev_cfg_s};
+    /* Set up cryptocell TRNG */
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x1c4) = 0x00000001;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x140) = 0x00000001;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x1c4) = 0x00000001;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x130) = 0x000001f4;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x12c) = 0x00000000;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x108) = 0x0000003f;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x100) = 0x0000001e;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x10c) = 0x00000004;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x10c) = 0x00000004;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x138) = 0x00000000;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x12c) = 0x00000001;
+    while (*((volatile uint32_t *)(CC3XX_BASE_S + 0x104)) != 0x1){}
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x1bc) = 0x00000001;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x108) = 0xffffffff;
 
-    stdio_is_initialized_reset();
+    /* Randomly initialize the TRAM key words */
+    tram_key_prefill_value = *((volatile uint32_t *)(CC3XX_BASE_S + 0x114));
+    for (register uint32_t idx __asm("r1") = 0; idx < 8; idx++) {
+        tram_key[idx] = tram_key_prefill_value;
+    }
 
-    lcm_get_sp_enabled(&lcm_dev_s, &sp_enabled);
-    lcm_get_lcs(&lcm_dev_s, &lcs);
+    /* Generate the random word which is used to erase the tram key */
+    tram_key_erase_value = *((volatile uint32_t *)(CC3XX_BASE_S + 0x118));
 
-    bl1_trng_generate_random(prbg_seed, sizeof(prbg_seed));
-    kmu_init(&kmu_dev_s, prbg_seed);
+    /* Generate the TRAM key and shut down the cryptocell trng */
+    tram_key[0] = *((volatile uint32_t *)(CC3XX_BASE_S + 0x11c));
+    tram_key[1] = *((volatile uint32_t *)(CC3XX_BASE_S + 0x120));
+    tram_key[2] = *((volatile uint32_t *)(CC3XX_BASE_S + 0x124));
+    tram_key[3] = *((volatile uint32_t *)(CC3XX_BASE_S + 0x128));
+    while (*((volatile uint32_t *)(CC3XX_BASE_S + 0x104)) != 0x1){}
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x1bc) = 0x00000001;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x108) = 0xffffffff;
+    tram_key[4] = *((volatile uint32_t *)(CC3XX_BASE_S + 0x114));
+    tram_key[5] = *((volatile uint32_t *)(CC3XX_BASE_S + 0x118));
+    tram_key[6] = *((volatile uint32_t *)(CC3XX_BASE_S + 0x11c));
+    tram_key[7] = *((volatile uint32_t *)(CC3XX_BASE_S + 0x120));
 
-    /* The secure provisioning reset resets the KMU which wipes the keyslots,
-     * but it's still a warm reset so the DMA ICS doesn't run. Because of this,
-     * we need to generate a new TRAM key.
+    /* Write the TRAM keyslot */
+    for (register uint32_t idx __asm("r1") = 0; idx < 8; idx ++) {
+        *(volatile uint32_t *)(KMU_BASE_S + 0x210 + idx * sizeof(uint32_t)) = tram_key[idx];
+    }
+
+    /* configure and lock the TRAM keyslot */
+    *(volatile uint32_t *)(KMU_BASE_S + 0x0cc) = (TRAM_BASE_S + 0x008);
+    *(volatile uint32_t *)(KMU_BASE_S + 0x04c) = 0x00d60100;
+
+    /* Set the TRAM key */
+    for (register uint32_t idx __asm("r1") = 0; idx < 8; idx ++) {
+        *(volatile uint32_t *)(TRAM_BASE_S + 0x008 + idx * sizeof(uint32_t)) = tram_key[idx];
+    }
+
+    /* Erase the TRAM key */
+    for (register uint32_t idx __asm("r1") = 0; idx < 8; idx++) {
+        tram_key[idx] = tram_key_erase_value;
+    }
+
+    /* Enable the TRAM */
+    *(volatile uint32_t *)(TRAM_BASE_S + 0x004) = 0x00000001;
+
+    /* Generate the TRAM erase random value */
+    tram_erase_value = *((volatile uint32_t *)(CC3XX_BASE_S + 0x124));
+
+    /* Work out how many DMA channels exist */
+    register uint32_t dma_channel_amount __asm("r2") =
+        (*((volatile uint32_t *)(DMA_350_BASE_S + 0xfb0)) >> 4 & 0xF) + 1;
+
+    /* Configure all DMA channels to wipe the DTCM with the random value in
+     * parallel.
      */
-    if (sp_enabled == LCM_TRUE && (lcs == LCM_LCS_CM || lcs == LCM_LCS_DM)) {
-        bl1_trng_generate_random(tram_key, sizeof(tram_key));
+    for (register uint32_t idx __asm("r1") = 0; idx < dma_channel_amount; idx++) {
+        /* Clear the DMA channel before use */
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x000) = 0x00000002;
+        while ((*((volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x000)) & 0x2) != 0) {}
 
-        kmu_set_key(&kmu_dev_s, RSE_KMU_SLOT_TRAM_KEY, tram_key, sizeof(tram_key));
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x038) = tram_erase_value;
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x02c) = 0x000F0044;
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x018) =
+            DTCM_CPU0_BASE_S + (DTCM_SIZE / dma_channel_amount * idx);
+
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x030) = 0x00010000;
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x020) =
+            (DTCM_SIZE / sizeof(uint64_t) / dma_channel_amount) << 16;
+
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x024) = 0x00000000;
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x00c) = 0x1200603;
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x008) = 0x00000000;
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x000) = 0x00000001;
     }
 
-    kmu_set_key_export_config(&kmu_dev_s, RSE_KMU_SLOT_TRAM_KEY, &tram_key_export_config);
-    kmu_set_key_export_config_locked(&kmu_dev_s, RSE_KMU_SLOT_TRAM_KEY);
-    kmu_set_key_locked(&kmu_dev_s, RSE_KMU_SLOT_TRAM_KEY);
-    kmu_export_key(&kmu_dev_s, RSE_KMU_SLOT_TRAM_KEY);
-
-    tram_enable_encryption(&tram_dev_s);
-
-    if (sp_enabled == LCM_TRUE && (lcs == LCM_LCS_CM || lcs == LCM_LCS_DM)) {
-        bl1_trng_generate_random((uint8_t *)&random_word, sizeof(random_word));
-
-        for (idx = 0; idx < DTCM_SIZE / sizeof(uint32_t); idx++) {
-            ((uint32_t *)DTCM_BASE_S)[idx] = random_word;
-        }
+    /* Wait for all the DMA channels to finish */
+    for (register uint32_t idx __asm("r1") = 0; idx < dma_channel_amount; idx++) {
+        while ((*((volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x000)) & 0x1) != 0) {}
     }
 
-    stdio_is_initialized_reset();
+    /* Shut down the cryptocell TRNG */
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x12c) = 0x00000000;
+    *(volatile uint32_t *)(CC3XX_BASE_S + 0x1c4) = 0x00000000;
 };
-#endif /* RSE_ENABLE_TRAM */
+
+#if !(defined(RSE_BL1_TEST_BINARY) && defined(RSE_TEST_BINARY_IN_SRAM))
+static inline void __attribute__ ((always_inline)) erase_vm0_and_vm1(void)
+{
+    register uint32_t vm_erase_size __asm("r0");
+    register uint32_t dma_channel_amount __asm("r1");
+
+    if ((*(volatile uint32_t *)(RSE_SYSCTRL_BASE_S + 0x10c) >>
+         RSE_GRETREG_BIT_OFFSET_PERSISTENT_DATA_VALID) & 0b1) {
+        vm_erase_size = (VM0_SIZE + VM1_SIZE - VM_COLD_RESET_RETAINED_SIZE);
+    } else {
+        vm_erase_size = (VM0_SIZE + VM1_SIZE);
+    }
+
+    if (vm_erase_size == 0) {
+        return;
+    }
+
+    dma_channel_amount = (*((volatile uint32_t *)(DMA_350_BASE_S + 0xfb0)) >> 4 & 0xF) + 1;
+
+    /* Start the VM erase in the background */
+    for (register uint32_t idx __asm("r2") = 0; idx < dma_channel_amount; idx++) {
+        /* Clear the DMA channel before use */
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x000) = 0x00000002;
+        while ((*((volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x000)) & 0x2) != 0) {}
+
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x038) = 0x00000000;
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x02c) = 0x000F0044;
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x018) =
+            VM0_BASE_S + (vm_erase_size / dma_channel_amount * idx);
+
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x030) = 0x00010000;
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x020) =
+            (vm_erase_size / sizeof(uint64_t) / dma_channel_amount) << 16;
+
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x024) = 0x00000000;
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x00c) = 0x1200603;
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x008) = 0x00000000;
+        *(volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x000) = 0x00000001;
+    }
+}
+#endif /* !(RSE_BL1_TEST_BINARY && RSE_TEST_BINARY_IN_SRAM) */
 
 /*----------------------------------------------------------------------------
   Reset Handler called on controller reset
  *----------------------------------------------------------------------------*/
-void Reset_Handler(void)
+void __NO_RETURN Reset_Handler(void)
 {
 #ifdef RSE_SUPPORT_ROM_LIB_RELOCATION
     /*
@@ -290,30 +358,18 @@ void Reset_Handler(void)
     __asm volatile("ldr    r9, =__etext \n");
 #endif /* RSE_SUPPORT_ROM_LIB_RELOCATION */
 
-    /* Enable caching, particularly to avoid ECC errors in VM0/1 */
-    SCB_EnableICache();
-    SCB_EnableDCache();
-
     /* Disable No-Write Allocate mode for the DCache to avoid DCache being
      * bypassed when streaming mode is detected, e.g. during memset()
      */
     ICB->ACTLR |= ICB_ACTLR_DISNWAMODE_Msk;
 
-#ifdef RSE_ENABLE_TRAM
-    /* Set MSP to be in VM0 to start with */
-    __set_MSP(CM_PROVISIONING_BUNDLE_START);
-    __set_MSPLIM(VM0_BASE_S);
-
     setup_tram_encryption();
 
-    /* Now switch back to the right stack (which is in the TRAM) */
-    __set_MSPLIM(0);
-    __set_MSP((uint32_t)(&__INITIAL_SP));
-#endif /* RSE_ENABLE_TRAM */
+#if !(defined(RSE_BL1_TEST_BINARY) && defined(RSE_TEST_BINARY_IN_SRAM))
+    erase_vm0_and_vm1();
+#endif
 
     __set_MSPLIM((uint32_t)(&__STACK_LIMIT));
-
-    rse_setup_persistent_data();
 
     SystemInit();                    /* CMSIS System Initialization */
     __PROGRAM_START();               /* Enter PreMain (C library entry point) */

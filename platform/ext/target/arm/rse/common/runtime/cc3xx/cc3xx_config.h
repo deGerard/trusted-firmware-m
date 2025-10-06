@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024, The TrustedFirmware-M Contributors. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -54,6 +54,11 @@
  */
 #define CC3XX_CONFIG_AES_EXTERNAL_KEY_LOADER
 
+/* Whether the ECDSA module supports computing the value of parameter k following
+ * the deterministic procedure described in RFC 6979, i.e. DETERMINISTIC_ECDSA
+ */
+/* #define CC3XX_CONFIG_ECDSA_SIGN_DETERMINISTIC_ENABLE */
+
 /* Whether CHACHA is enabled */
 #define CC3XX_CONFIG_CHACHA_ENABLE
 
@@ -62,6 +67,16 @@
 
 /* Whether DMA remapping is enabled */
 #define CC3XX_CONFIG_DMA_REMAP_ENABLE
+
+/* Only has an effect if CC3XX_CONFIG_DMA_REMAP_ENABLE is defined.
+ * Defines DMA remapping regions.
+ * See cc3xx_lowlevel_init for further details.
+ */
+#define CC3XX_DMA_REMAP_REGIONS \
+    {ITCM_BASE_S, ITCM_SIZE, ITCM_CPU0_BASE_S, 0x01000000}, \
+    {ITCM_BASE_NS, ITCM_SIZE, ITCM_CPU0_BASE_NS, 0x01000000}, \
+    {DTCM_BASE_S, DTCM_SIZE, DTCM_CPU0_BASE_S, 0x01000000}, \
+    {DTCM_BASE_NS, DTCM_SIZE, DTCM_CPU0_BASE_NS, 0x01000000}
 
 /* Whether DMA supports working on cached memories */
 #define CC3XX_CONFIG_DMA_CACHE_FLUSH_ENABLE
@@ -79,13 +94,16 @@
 /* Whether RNG is enabled */
 #define CC3XX_CONFIG_RNG_ENABLE
 
-/* Whether the Continuous Health Tests as per SP800-90B are enabled */
-/* #define CC3XX_CONFIG_RNG_CONTINUOUS_HEALTH_TESTS_ENABLE */
+/* Collect TRNG error statistics */
+/* #define CC3XX_CONFIG_TRNG_COLLECT_STATISTCS */
+
+/* Generate entropy to RNG SRAM, and copy it to destination via DMA */
+/* #define CC3XX_CONFIG_TRNG_DMA */
 
 /* Whether RNG uses HMAC_DRBG when RNG_DRBG is selected */
-#define CC3XX_CONFIG_RNG_DRBG_HMAC
+/* #define CC3XX_CONFIG_RNG_DRBG_HMAC */
 /* Whether RNG uses CTR_DRBG when RNG_DRBG is selected */
-/* #define CC3XX_CONFIG_RNG_DRBG_CTR */
+#define CC3XX_CONFIG_RNG_DRBG_CTR
 /* Whether RNG uses HASH_DRBG when RNG_DRBG is selected */
 /* #define CC3XX_CONFIG_RNG_DRBG_HASH */
 
@@ -171,7 +189,7 @@
 /* #define CC3XX_CONFIG_EC_CURVE_SECP_224_R1_ENABLE */
 #define CC3XX_CONFIG_EC_CURVE_SECP_256_R1_ENABLE
 #define CC3XX_CONFIG_EC_CURVE_SECP_384_R1_ENABLE
-/* #define CC3XX_CONFIG_EC_CURVE_SECP_521_R1_ENABLE */
+#define CC3XX_CONFIG_EC_CURVE_SECP_521_R1_ENABLE
 /* #define CC3XX_CONFIG_EC_CURVE_SECP_192_K1_ENABLE */
 /* #define CC3XX_CONFIG_EC_CURVE_SECP_224_K1_ENABLE */
 /* #define CC3XX_CONFIG_EC_CURVE_SECP_256_K1_ENABLE */

@@ -1,9 +1,11 @@
 /*
- * Copyright (c) 2025, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
  */
+
+#include <string.h>
 
 #include "cc3xx_test_dpa.h"
 #ifndef CC3XX_CONFIG_FILE
@@ -27,7 +29,7 @@ void dpa_copy_test(struct test_result_t *ret)
     size_t test_sizes[] = {1, 32, 33, 100, 256, MAX_WORD_COUNT_COPY};
 
     /* Fill src with random words */
-    err = cc3xx_lowlevel_rng_get_random(src, MAX_WORD_COUNT_COPY * 4, CC3XX_RNG_FAST);
+    err = cc3xx_lowlevel_rng_get_random(src, MAX_WORD_COUNT_COPY * 4, CC3XX_RNG_LFSR);
     TEST_ASSERT(err == CC3XX_ERR_SUCCESS, "Random generation failed");
 
     /* Verify src is not all zero */

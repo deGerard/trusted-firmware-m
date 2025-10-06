@@ -46,6 +46,7 @@ target_sources(platform_s
         device/host_device_definition.c
         device/rse_expansion_device_definition.c
         rse_expansion_peripherals_def.c
+        $<$<BOOL:${TFM_MULTI_CORE_TOPOLOGY}>:${CMAKE_CURRENT_SOURCE_DIR}/rse_comms/rse_comms_platform.c>
 )
 
 #========================= Platform BL2 =======================================#
@@ -99,6 +100,13 @@ target_sources(platform_bl1_1
         device/host_device_definition.c
         device/rse_expansion_device_definition.c
 )
+
+if (TFM_MULTI_CORE_TOPOLOGY AND (RSE_AMOUNT GREATER 1))
+    target_sources(platform_bl1_1
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/rse_comms/rse_comms_platform.c
+    )
+endif()
 
 target_include_directories(platform_bl1_1_interface
     INTERFACE

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024, The TrustedFirmware-M Contributors. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -12,6 +12,9 @@
 #include "platform_base_address.h"
 #define CC3XX_CONFIG_BASE_ADDRESS (CC3XX_BASE_S)
 #endif /* CC3XX_CONFIG_BASE_ADDRESS */
+
+/* Whether the DCU apply permission function enforces ICV restriction mask */
+/* #define CC3XX_CONFIG_DCU_ICV_RESTRICTION_MASK_CHECK */
 
 /* Whether uint32_t accesses must be strictly 4-byte aligned */
 /* CC3XX_CONFIG_STRICT_UINT32_T_ALIGNMENT */
@@ -73,6 +76,12 @@
 
 /* Whether RNG is enabled */
 #define CC3XX_CONFIG_RNG_ENABLE
+
+/* Collect TRNG error statistics */
+/* #define CC3XX_CONFIG_TRNG_COLLECT_STATISTCS */
+
+/* Generate entropy to RNG SRAM, and copy it to destination via DMA */
+/* #define CC3XX_CONFIG_TRNG_DMA */
 
 /* Whether RNG uses HMAC_DRBG when RNG_DRBG is selected */
 #define CC3XX_CONFIG_RNG_DRBG_HMAC
@@ -202,5 +211,14 @@
 #ifndef CC3XX_CONFIG_STDLIB_LFSR_MAX_ATTEMPTS
 #define CC3XX_CONFIG_STDLIB_LFSR_MAX_ATTEMPTS 128
 #endif /* CC3XX_CONFIG_STDLIB_LFSR_MAX_ATTEMPTS */
+
+/* Whether LCS logging is enabled */
+#define CC3XX_CONFIG_LCS_LOG_ENABLE
+
+/* Whether secure debug reset register logging is enabled */
+#define CC3XX_CONFIG_SECURE_DEBUG_RESET_LOG_ENABLE
+
+/* Whether General Purpose Persistent Configuration (GPPC) logging is enabled */
+#define CC3XX_CONFIG_GPPC_LOG_ENABLE
 
 #endif /* CC3XX_CONFIG_H */

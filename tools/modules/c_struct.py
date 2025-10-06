@@ -10,11 +10,17 @@ import clang.cindex as cl
 import struct
 from collections import Counter
 import os
+import subprocess
+import platform
+import sys
 
 import logging
 logger = logging.getLogger("TF-M.{}".format(__name__))
 
 from rich import inspect
+
+import argparse
+import tfm_tools.c_include
 
 pad = 4
 
@@ -35,6 +41,21 @@ format_chars = {
     'double'      : 'd',
     'long double' : 'd',
 }
+
+
+def get_macos_sdk_path():
+    """Get the path to the macOS SDK via xcrun."""
+    try:
+        result = subprocess.run(
+            ['xcrun', '--sdk', 'macosx', '--show-sdk-path'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to get macOS SDK path: {e.stderr}")
+
 
 def _c_struct_or_union_from_cl_cursor(cursor, name, f):
         def is_field(x):
@@ -613,6 +634,9 @@ def _c_from_h_file(h_file, name, includes, defines, f, kind):
     args = ["-I{}".format(i) for i in includes if os.path.isdir(i)]
     args += ["-D{}".format(d) for d in defines]
 
+    if platform.system() == 'Darwin':
+        args.extend(['-isysroot', get_macos_sdk_path()])
+
     if not os.path.isfile(h_file):
         return FileNotFoundError
 
@@ -631,22 +655,18 @@ def _c_from_h_file(h_file, name, includes, defines, f, kind):
     if errors:
         for e in errors:
             print(e)
-        exit(1)
+        sys.exit(1)
 
     if len(t) == 0:
         print("Failed to find {} in {}".format(name, h_file))
-        exit(1)
+        sys.exit(1)
 
     assert(len(t) == 1)
     t = t[0]
 
     return f.from_cl_cursor(t, name)
 
-
-if __name__ == '__main__':
-    import argparse
-    import c_include
-
+def main():
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--h_file", help="header file to parse", required=True)
     parser.add_argument("--struct_name", help="struct name to evaluate", required=True)
@@ -662,3 +682,6 @@ if __name__ == '__main__':
 
     s = C_struct.from_h_file(args.h_file, args.struct_name, includes, defines)
     print(s)
+
+if __name__ == '__main__':
+    sys.exit(main())

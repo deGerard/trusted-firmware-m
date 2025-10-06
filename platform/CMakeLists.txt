@@ -8,6 +8,8 @@
 #-------------------------------------------------------------------------------
 cmake_minimum_required(VERSION 3.21)
 
+include(hex_generator)
+
 add_library(platform_s STATIC)
 add_library(platform_region_defs INTERFACE)
 add_library(platform_common_interface INTERFACE)
@@ -100,9 +102,11 @@ target_link_libraries(platform_s
         cmsis_stack_override
         cmsis
         tfm_log_headers
+        tfm_helper_lib
         $<$<BOOL:${CONFIG_TFM_BACKTRACE_ON_CORE_PANIC}>:tfm_log_unpriv>
         $<$<BOOL:${CONFIG_TFM_BACKTRACE_ON_CORE_PANIC}>:tfm_log>
         $<$<BOOL:${CONFIG_TFM_BACKTRACE_ON_CORE_PANIC}>:tfm_backtrace>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:eventlog>
     PRIVATE
         tfm_config
         tfm_spm_defs
@@ -110,13 +114,15 @@ target_link_libraries(platform_s
         $<$<BOOL:${PLATFORM_DEFAULT_ATTEST_HAL}>:tfm_sprt>
         $<$<BOOL:${TFM_PARTITION_CRYPTO}>:crypto_service_mbedcrypto>
         $<$<BOOL:${TFM_PARTITION_INITIAL_ATTESTATION}>:tfm_attestation_defs>
-        $<$<NOT:$<STREQUAL:${TFM_FIH_PROFILE},OFF>>:tfm_fih>
+        tfm_fih
         tfm_log
         psa_crypto_library_config
 )
 
 target_compile_definitions(platform_s
     PUBLIC
+        TFM_FIH_PROFILE_${TFM_FIH_PROFILE}
+        $<$<NOT:$<STREQUAL:${TFM_FIH_PROFILE},OFF>>:TFM_FIH_PROFILE_ON>
         LOG_LEVEL=${TFM_SPM_LOG_LEVEL}
         $<$<BOOL:${TFM_SPM_LOG_RAW_ENABLED}>:TFM_SPM_LOG_RAW_ENABLED>
         $<$<BOOL:${CONFIG_TFM_BACKTRACE_ON_CORE_PANIC}>:CONFIG_TFM_BACKTRACE_ON_CORE_PANIC>
@@ -125,7 +131,6 @@ target_compile_definitions(platform_s
         $<$<BOOL:${OTP_NV_COUNTERS_RAM_EMULATION}>:OTP_NV_COUNTERS_RAM_EMULATION=1>
         $<$<BOOL:${TFM_EXCEPTION_INFO_DUMP}>:TFM_EXCEPTION_INFO_DUMP>
         $<$<OR:$<VERSION_GREATER:${TFM_ISOLATION_LEVEL},1>,$<STREQUAL:"${TEST_PSA_API}","IPC">>:CONFIG_TFM_ENABLE_MEMORY_PROTECT>
-        $<$<BOOL:${TFM_PXN_ENABLE}>:TFM_PXN_ENABLE>
         $<$<STREQUAL:${CONFIG_TFM_FLOAT_ABI},hard>:CONFIG_TFM_FLOAT_ABI=2>
         $<$<STREQUAL:${CONFIG_TFM_FLOAT_ABI},soft>:CONFIG_TFM_FLOAT_ABI=0>
         $<$<BOOL:${CONFIG_TFM_LAZY_STACKING}>:CONFIG_TFM_LAZY_STACKING>
@@ -217,6 +222,7 @@ if(BL2)
             cmsis_stack_override
             cmsis
             tfm_log_headers
+            tfm_helper_lib
         PRIVATE
             bl2_crypto
             bl2_hal
@@ -231,6 +237,7 @@ if(BL2)
             BL2
             MCUBOOT_${MCUBOOT_UPGRADE_STRATEGY}
             $<$<BOOL:${MCUBOOT_DIRECT_XIP_REVERT}>:MCUBOOT_DIRECT_XIP_REVERT>
+            $<$<BOOL:${MCUBOOT_ROTPK_SIGN_POLICY}>:MCUBOOT_ROTPK_SIGN_POLICY>
             $<$<BOOL:${SYMMETRIC_INITIAL_ATTESTATION}>:SYMMETRIC_INITIAL_ATTESTATION>
             MCUBOOT_FIH_PROFILE_${MCUBOOT_FIH_PROFILE}
             $<$<BOOL:${PLATFORM_DEFAULT_OTP}>:PLATFORM_DEFAULT_OTP>
@@ -274,6 +281,7 @@ if(BL1 AND PLATFORM_DEFAULT_BL1)
             platform_common_interface
             cmsis_stack_override
             cmsis
+            tfm_helper_lib
     )
 
     target_compile_definitions(platform_bl1_1_interface
@@ -376,6 +384,7 @@ if(BL1 AND PLATFORM_DEFAULT_BL1)
     target_link_libraries(platform_bl1_2
         PUBLIC
             platform_bl1_1_interface
+            tfm_helper_lib
         PRIVATE
             tfm_fih
             tfm_fih_headers
@@ -417,6 +426,7 @@ target_compile_definitions(platform_region_defs
         DAUTH_${DEBUG_AUTHENTICATION}
         $<$<BOOL:${MCUBOOT_IMAGE_NUMBER}>:MCUBOOT_IMAGE_NUMBER=${MCUBOOT_IMAGE_NUMBER}>
         $<$<BOOL:${MCUBOOT_BUILTIN_KEY}>:MCUBOOT_BUILTIN_KEY>
+        $<$<BOOL:${MCUBOOT_ENC_IMAGES}>:MCUBOOT_ENC_IMAGES>
         $<$<STREQUAL:${SIG_TYPE},RSA>:MCUBOOT_SIGN_RSA>
         $<$<STREQUAL:${SIG_TYPE},RSA>:MCUBOOT_SIGN_RSA_LEN=${SIG_LEN}>
         $<$<STREQUAL:${SIG_TYPE},EC>:MCUBOOT_SIGN_EC${SIG_LEN}>
@@ -443,6 +453,8 @@ target_compile_definitions(platform_region_defs
         $<$<BOOL:${TFM_BL1_1_MEASUREMENT_HASH_ALG}>:TFM_BL1_1_MEASUREMENT_HASH_ALG=TFM_BL1_HASH_ALG_${TFM_BL1_1_MEASUREMENT_HASH_ALG}>
         $<$<BOOL:${TFM_BL1_1_MEASUREMENT_HASH_ALG}>:TFM_BL1_ENABLE_${TFM_BL1_1_ROTPK_HASH_ALG}>
         $<$<BOOL:${MCUBOOT_HW_KEY}>:MCUBOOT_HW_KEY>
+        $<$<BOOL:${TFM_PXN_ENABLE}>:TFM_PXN_ENABLE>
+        $<$<BOOL:${PLATFORM_DEFAULT_MEASUREMENT_SLOTS}>:PLATFORM_DEFAULT_MEASUREMENT_SLOTS>
 )
 
 target_include_directories(platform_region_defs
@@ -456,3 +468,10 @@ target_link_libraries(platform_region_defs
     INTERFACE
         tfm_config
 )
+
+if(TFM_MERGE_HEX_FILES)
+    merge_hex(merged_secure_hex
+        OUTPUT         ${TFM_S_HEX_FILE_PATH}
+        INPUT_TARGETS  ${TFM_S_HEX_MERGE_LIST}
+    )
+endif()

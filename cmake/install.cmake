@@ -1,7 +1,5 @@
 #-------------------------------------------------------------------------------
-# Copyright (c) 2020-2024, Arm Limited. All rights reserved.
-# Copyright (c) 2022-2023 Cypress Semiconductor Corporation (an Infineon company)
-# or an affiliate of Cypress Semiconductor Corporation. All rights reserved.
+# SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
 #
 # SPDX-License-Identifier: BSD-3-Clause
 #
@@ -27,7 +25,9 @@ if (BL1 AND PLATFORM_DEFAULT_BL1)
             DESTINATION ${INSTALL_PLATFORM_NS_DIR}/bl1_2_config)
 endif()
 
-install(FILES       ${INTERFACE_INC_DIR}/psa/client.h
+install(FILES       ${INTERFACE_INC_DIR}/psa/api_broker.h
+                    ${INTERFACE_INC_DIR}/psa/client.h
+                    ${INTERFACE_INC_DIR}/hybrid_platform/api_broker_defs.h
                     ${INTERFACE_INC_DIR}/psa/error.h
         DESTINATION ${INSTALL_INTERFACE_INC_DIR}/psa)
 
@@ -127,10 +127,25 @@ endif()
 
 if(TFM_PARTITION_FIRMWARE_UPDATE)
     install(FILES       ${INTERFACE_INC_DIR}/psa/update.h
-                        ${CMAKE_BINARY_DIR}/generated/interface/include/psa/fwu_config.h
             DESTINATION ${INSTALL_INTERFACE_INC_DIR}/psa)
     install(FILES       ${INTERFACE_INC_DIR}/tfm_fwu_defs.h
             DESTINATION ${INSTALL_INTERFACE_INC_DIR})
+    if(FWU_DEVICE_CONFIG_FILE)
+        install(FILES       ${FWU_DEVICE_CONFIG_FILE}
+                RENAME      fwu_config.h
+                DESTINATION ${INSTALL_INTERFACE_INC_DIR}/psa)
+    else()
+        install(FILES       ${CMAKE_BINARY_DIR}/generated/interface/include/psa/fwu_config.h
+                DESTINATION ${INSTALL_INTERFACE_INC_DIR}/psa)
+    endif()
+    if(FWU_DEVICE_IMPL_INFO_DEF_FILE)
+        install(FILES       ${FWU_DEVICE_IMPL_INFO_DEF_FILE}
+                RENAME      tfm_fwu_impl_info.h
+                DESTINATION ${INSTALL_INTERFACE_INC_DIR})
+    else()
+        install(FILES       ${INTERFACE_INC_DIR}/tfm_fwu_impl_info.h
+                DESTINATION ${INSTALL_INTERFACE_INC_DIR})
+    endif()
 endif()
 
 if(PLATFORM_DEFAULT_CRYPTO_KEYS)
@@ -145,6 +160,7 @@ if (TFM_PARTITION_NS_AGENT_MAILBOX)
                         ${INTERFACE_SRC_DIR}/multi_core/tfm_multi_core_ns_api.c
                         ${INTERFACE_SRC_DIR}/multi_core/tfm_multi_core_psa_ns_api.c
                         ${INTERFACE_SRC_DIR}/multi_core/tfm_ns_mailbox_thread.c
+                        ${INTERFACE_SRC_DIR}/multi_core/tfm_ns_mailbox_common.c
             DESTINATION ${INSTALL_INTERFACE_SRC_DIR}/multi_core)
 endif()
 
@@ -158,6 +174,11 @@ install(DIRECTORY   ${INTERFACE_INC_DIR}/os_wrapper
 
 if (CONFIG_TFM_USE_TRUSTZONE)
     install(DIRECTORY   ${INTERFACE_SRC_DIR}/os_wrapper
+            DESTINATION ${INSTALL_INTERFACE_SRC_DIR})
+endif()
+
+if (TFM_HYBRID_PLATFORM_API_BROKER)
+    install(DIRECTORY   ${INTERFACE_SRC_DIR}/hybrid_platform
             DESTINATION ${INSTALL_INTERFACE_SRC_DIR})
 endif()
 
@@ -194,7 +215,7 @@ if(BL2 AND PLATFORM_DEFAULT_IMAGE_SIGNING)
             PATTERN "scripts/*.py"
             PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
             GROUP_EXECUTE GROUP_READ
-            PATTERN "scripts/wrapper/*.py"
+            PATTERN "scripts/*.py"
             PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
                         GROUP_EXECUTE GROUP_READ)
 
@@ -307,5 +328,9 @@ configure_file(${CMAKE_SOURCE_DIR}/config/spe_config.cmake.in
                ${INSTALL_CMAKE_DIR}/spe_config.cmake @ONLY)
 
 # Toolchain utils
-install(FILES       cmake/set_extensions.cmake
+install(FILES
+        cmake/set_extensions.cmake
+        cmake/mcpu_features.cmake
+        cmake/imported_target.cmake
+        cmake/hex_generator.cmake
         DESTINATION ${INSTALL_CMAKE_DIR})

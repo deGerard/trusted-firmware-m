@@ -1,10 +1,10 @@
 /*
- * Copyright (c) 2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
  */
-
+#include <string.h>
 #include "boot_hal.h"
 #include "region.h"
 #include "platform_s_device_definition.h"
@@ -14,10 +14,8 @@
 #include "platform_base_address.h"
 #include "uart_stdout.h"
 #include "tfm_plat_otp.h"
-#include "trng.h"
 #include "kmu_drv.h"
 #include "platform_regs.h"
-#include <string.h>
 #include "cmsis_compiler.h"
 #include "tfm_plat_nv_counters.h"
 #include "mpu_armv8m_drv.h"
@@ -38,7 +36,7 @@ uint32_t bl1_image_get_flash_offset(uint32_t image_id)
     switch (image_id) {
     case 0:
     case 1:
-        return BL2_ENCRYPTED_IMAGE_START - FLASH_BL1_BASE_ADDRESS;
+        return BL2_IMAGE_LOAD_ADDRESS - FLASH_BL1_BASE_ADDRESS;
     default:
         while(1){}
     }
@@ -79,21 +77,6 @@ int32_t boot_platform_post_init(void)
     return 0;
 }
 
-static int invalidate_hardware_keys(void)
-{
-    enum kmu_error_t kmu_err;
-    uint32_t slot;
-
-    for (slot = 0; slot < KMU_USER_SLOT_MIN; slot++) {
-        kmu_err = kmu_set_slot_invalid(&KMU_DEV_S, slot);
-        if (kmu_err != KMU_ERROR_NONE) {
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
 static int disable_rom_execution(void)
 {
     int rc;
@@ -130,7 +113,7 @@ void boot_platform_start_next_image(struct boot_arm_vector_table *vt)
     static struct boot_arm_vector_table *vt_cpy;
     int32_t result;
 
-    result = invalidate_hardware_keys();
+    result = kmu_invalidate_hardware_keys(&KMU_DEV_S);
     if (result) {
         while(1){}
     }
@@ -144,7 +127,7 @@ void boot_platform_start_next_image(struct boot_arm_vector_table *vt)
     stdio_uninit();
 #endif /* (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2) */
 
-    kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
+    fih_delay();
 
     result = disable_rom_execution();
     if (result) {
@@ -171,7 +154,7 @@ void boot_platform_start_next_image(struct boot_arm_vector_table *vt)
 
 int boot_platform_pre_load(uint32_t image_id)
 {
-    kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
+    fih_delay();
 
     return 0;
 }
@@ -180,7 +163,7 @@ int boot_platform_post_load(uint32_t image_id)
 {
     int rc;
 
-    rc = invalidate_hardware_keys();
+    rc = kmu_invalidate_hardware_keys(&KMU_DEV_S);
     if (rc) {
         return rc;
     }

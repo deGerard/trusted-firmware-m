@@ -118,7 +118,7 @@ psa_status_t tfm_spm_partition_psa_get(psa_signal_t signal, psa_msg_t *msg)
     psa_status_t ret = PSA_ERROR_GENERIC_ERROR;
     struct connection_t *handle = NULL;
     struct partition_t *partition = NULL;
-    fih_int fih_rc = FIH_FAILURE;
+    FIH_DECLARE(fih_rc, FIH_FAILURE);
 
     /*
      * Only one message could be retrieved every time for psa_get(). It is a
@@ -137,7 +137,7 @@ psa_status_t tfm_spm_partition_psa_get(psa_signal_t signal, psa_msg_t *msg)
     FIH_CALL(tfm_hal_memory_check, fih_rc,
              partition->boundary, (uintptr_t)msg,
              sizeof(psa_msg_t), TFM_HAL_ACCESS_READWRITE);
-    if (fih_not_eq(fih_rc, fih_int_encode(PSA_SUCCESS))) {
+    if (FIH_NOT_EQ(fih_rc, PSA_SUCCESS)) {
         tfm_core_panic();
     }
 
@@ -159,8 +159,8 @@ psa_status_t tfm_spm_partition_psa_get(psa_signal_t signal, psa_msg_t *msg)
 
     if (signal == ASYNC_MSG_REPLY) {
         handle = spm_get_async_replied_handle(partition);
-        ret = handle->replied_value;
         msg->rhandle = handle;
+        ret = PSA_SUCCESS;
     } else {
         /*
          * Get message by signal from partition. It is a fatal error if getting
@@ -379,26 +379,24 @@ psa_status_t tfm_spm_partition_psa_clear(void)
 }
 #endif /* CONFIG_TFM_DOORBELL_API == 1 */
 
-psa_status_t tfm_spm_partition_psa_panic(void)
+void tfm_spm_partition_psa_panic(void)
 {
 #ifdef CONFIG_TFM_HALT_ON_CORE_PANIC
     tfm_hal_system_halt();
 #else
     /*
-     * PSA FF recommends that the SPM causes the system to restart when a secure
-     * partition panics.
+     * PSA FF recommends that the SPM causes the system
+     * to restart when a secure partition panics
      */
-    tfm_hal_system_reset();
+    tfm_hal_system_reset(TFM_PLAT_SWSYN_DEFAULT);
 #endif
 
-    /* Suppress Pe111 (statement is unreachable) for IAR as return here is in
-     * case system reset fails, which should not happen */
-#if defined(__ICCARM__)
-#pragma diag_suppress = Pe111
-#endif
-    /* Execution should not reach here */
-    return PSA_ERROR_GENERIC_ERROR;
 #if defined(__ICCARM__)
 #pragma diag_default = Pe111
+#else
+    __builtin_unreachable();
 #endif
+    while (1) {
+        __NOP();
+    }
 }

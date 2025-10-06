@@ -5,6 +5,8 @@
  *
  */
 
+#include <string.h>
+#include "bl1_random.h"
 #include "boot_hal.h"
 #include "region.h"
 #include "device_definition.h"
@@ -24,17 +26,26 @@
 #include "fih.h"
 #include "cc3xx_drv.h"
 #endif /* CRYPTO_HW_ACCELERATOR */
-#include <string.h>
 #include "cmsis_compiler.h"
+#include "rse_boot_self_tests.h"
 #ifdef RSE_ENABLE_BRINGUP_HELPERS
 #include "rse_bringup_helpers.h"
 #endif /* RSE_ENABLE_BRINGUP_HELPERS */
-#include "trng.h"
 #include "rse_sam_config.h"
 #include "tfm_log.h"
 #include "bl1_1_debug.h"
+#include "mpu_armv8m_drv.h"
+#include "rse_persistent_data.h"
 
 #define ARRAY_SIZE(arr) (sizeof(arr)/sizeof((arr)[0]))
+
+#if (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2)
+#define LOGGING_ENABLED
+#endif /* (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2) */
+
+#if defined(LOGGING_ENABLED) && defined(RSE_USE_HOST_UART)
+#include "atu_config.h"
+#endif
 
 #define CMSDK_SECRESPCFG_BUS_ERR_MASK   (1UL)
 
@@ -43,25 +54,54 @@ extern ARM_DRIVER_FLASH FLASH_DEV_NAME;
 
 REGION_DECLARE(Image$$, ARM_LIB_STACK, $$ZI$$Base);
 
-#if (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2)
-static enum tfm_plat_err_t init_atu_regions(void)
+#if defined(LOGGING_ENABLED) && defined(RSE_USE_HOST_UART)
+static struct mpu_armv8m_dev_t dev_mpu_s = { MPU_BASE };
+
+static int32_t init_mpu_region_for_atu(void)
 {
-#ifdef RSE_USE_HOST_UART
-    enum atu_error_t atu_err;
+    int32_t rc;
 
-    /* Initialize UART region */
-    atu_err = atu_initialize_region(&ATU_DEV_S,
-                                    get_supported_region_count(&ATU_DEV_S) - 1,
-                                    HOST_UART0_BASE_NS, HOST_UART_BASE,
-                                    HOST_UART_SIZE);
-    if (atu_err != ATU_ERR_NONE) {
-        return atu_err;
+    /* Set entire RSE ATU window to device memory to prevent caching */
+    struct mpu_armv8m_region_cfg_t atu_window_region_config = {
+        0,
+        HOST_ACCESS_BASE_NS,
+        HOST_ACCESS_LIMIT_S,
+        MPU_ARMV8M_MAIR_ATTR_DEVICE_IDX,
+        MPU_ARMV8M_XN_EXEC_NEVER,
+        MPU_ARMV8M_AP_RW_PRIV_UNPRIV,
+        MPU_ARMV8M_SH_NONE,
+#ifdef TFM_PXN_ENABLE
+        MPU_ARMV8M_PRIV_EXEC_NEVER,
+#endif
+    };
+
+    FIH_CALL(mpu_armv8m_region_enable, rc, &dev_mpu_s, &atu_window_region_config);
+    if (rc != 0) {
+        return rc;
     }
-#endif /* RSE_USE_HOST_UART */
 
-    return TFM_PLAT_ERR_SUCCESS;
+    FIH_CALL(mpu_armv8m_enable, rc, &dev_mpu_s, PRIVILEGED_DEFAULT_ENABLE, HARDFAULT_NMI_ENABLE);
+    return rc;
 }
-#endif /* (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2) */
+#endif /* defined(LOGGING_ENABLED) && defined(RSE_USE_HOST_UART) */
+
+static void wait_for_vm_erase_to_finish_and_enable_cache(void)
+{
+    /* Wait for the DMA to finish erasing VM0 and VM1 */
+    uint32_t dma_channel_amount = (*((volatile uint32_t *)(DMA_350_BASE_S + 0xfb0)) >> 4 & 0xF) + 1;
+
+    /* FIXME remove once the FVP is fixed */
+    dma_channel_amount = 1;
+
+    /* Wait for each channel to finish */
+    for (int idx = 0; idx < dma_channel_amount; idx++) {
+        while ((*((volatile uint32_t *)(DMA_350_BASE_S + 0x1000 + (0x100 * idx) + 0x000)) & 0x1) != 0) {}
+    }
+
+    /* Now enable caching */
+    SCB_EnableICache();
+    SCB_EnableDCache();
+}
 
 /* bootloader platform-specific hw initialization */
 int32_t boot_platform_init(void)
@@ -71,7 +111,6 @@ int32_t boot_platform_init(void)
     enum kmu_error_t kmu_err;
     cc3xx_err_t cc_err;
     uint8_t prbg_seed[KMU_PRBG_SEED_LEN];
-    uint32_t idx;
 #ifdef RSE_ENABLE_BRINGUP_HELPERS
     enum lcm_error_t lcm_err;
     enum lcm_tp_mode_t tp_mode;
@@ -116,36 +155,32 @@ int32_t boot_platform_init(void)
         return err;
     }
 
-#if (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2)
-    plat_err = init_atu_regions();
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
+#if defined(LOGGING_ENABLED) && defined(RSE_USE_HOST_UART)
+    /**
+     * If we are using the ATU to map the host UART into the RSE memory
+     * map then we also need to configure the MPU to ensure that the
+     * address space we access from the RSE is marked as device memory
+     * to avoid CPU caching. In this case, we also configure the entire
+     * window to be device memory so that it does not need to be reconfigured
+     * by later components
+     */
+    err = init_mpu_region_for_atu();
+    if (err != 0) {
+        return err;
     }
 
+    /* Initialize ATU driver */
+    err = atu_rse_drv_init(&ATU_DEV_S, ATU_DOMAIN_ROOT, atu_regions_static, atu_stat_count);
+    if (err != ATU_ERR_NONE) {
+            return err;
+    }
+#endif /* defined(LOGGING_ENABLED) && defined(RSE_USE_HOST_UART) */
+
+#ifdef LOGGING_ENABLED
     stdio_init();
-#endif /* (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2) */
+#endif /* LOGGING_ENABLED */
 
 #ifdef CRYPTO_HW_ACCELERATOR
-    const cc3xx_dma_remap_region_t remap_regions[] = {
-        {ITCM_BASE_S, ITCM_SIZE, ITCM_CPU0_BASE_S, 0x01000000},
-        {ITCM_BASE_NS, ITCM_SIZE, ITCM_CPU0_BASE_NS, 0x01000000},
-        {DTCM_BASE_S, DTCM_SIZE, DTCM_CPU0_BASE_S, 0x01000000},
-        {DTCM_BASE_NS, DTCM_SIZE, DTCM_CPU0_BASE_NS, 0x01000000},
-    };
-
-    const cc3xx_dma_burst_restricted_region_t burst_restricted_regions[] = {
-        {KMU_BASE_S + 0x130, 0x400}, /* KMU Key Slot Registers */
-    };
-
-    for (idx = 0; idx < ARRAY_SIZE(remap_regions); idx++) {
-        cc3xx_lowlevel_dma_remap_region_init(idx, &remap_regions[idx]);
-    }
-
-    for (idx = 0; idx < ARRAY_SIZE(burst_restricted_regions); idx++) {
-        cc3xx_lowlevel_dma_burst_restricted_region_init(idx,
-            &burst_restricted_regions[idx]);
-    }
-
     cc_err = cc3xx_lowlevel_init();
     if (cc_err != CC3XX_ERR_SUCCESS) {
         return cc_err;
@@ -154,8 +189,15 @@ int32_t boot_platform_init(void)
     fih_delay_init();
 #endif /* CRYPTO_HW_ACCELERATOR */
 
+#ifdef RSE_ENABLE_ROM_SELF_TESTS
+    const rse_boot_self_test_ret_t self_tests = rse_boot_do_boot_self_tests();
+    if (!RSE_BOOT_SELF_TESTS_CHECK_OK(self_tests)) {
+        return (int32_t)self_tests;
+    }
+#endif /* RSE_ENABLE_ROM_SELF_TESTS */
+
     /* Init KMU */
-    err = bl1_trng_generate_random(prbg_seed, sizeof(prbg_seed));
+    err = bl1_random_generate_secure(prbg_seed, sizeof(prbg_seed));
     if (err != TFM_PLAT_ERR_SUCCESS) {
         return err;
     }
@@ -170,14 +212,6 @@ int32_t boot_platform_init(void)
     if (plat_err) {
         return plat_err;
     }
-
-    /* Load the PKA encryption key, now that it is set up */
-    kmu_err = kmu_export_key(&KMU_DEV_S, RSE_KMU_SLOT_CC3XX_PKA_SRAM_ENCRYPTION_KEY);
-    if (kmu_err != KMU_ERROR_NONE) {
-        return kmu_err;
-    }
-
-    cc3xx_lowlevel_pka_sram_encryption_enable();
 #endif /* CRYPTO_HW_ACCELERATOR */
 
     err = b1_1_platform_debug_init();
@@ -188,6 +222,10 @@ int32_t boot_platform_init(void)
     /* Clear boot data area */
     memset((void *)tfm_plat_get_shared_measurement_data_base(), 0,
            tfm_plat_get_shared_measurement_data_size());
+
+    wait_for_vm_erase_to_finish_and_enable_cache();
+
+    rse_setup_persistent_data();
 
     return 0;
 }
@@ -200,7 +238,9 @@ int32_t boot_platform_post_init(void)
 
 int boot_platform_pre_load(uint32_t image_id)
 {
-    kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
+    fih_delay();
+
+    (void)image_id;
 
     return 0;
 }
@@ -214,11 +254,11 @@ void boot_platform_start_next_image(struct boot_arm_vector_table *vt)
      */
     static struct boot_arm_vector_table *vt_cpy;
 
-#if (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2)
+#ifdef LOGGING_ENABLED
     stdio_uninit();
-#endif /* (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2) */
+#endif /* LOGGING_ENABLED */
 
-    kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
+    fih_delay();
 
     vt_cpy = vt;
 

@@ -1,5 +1,5 @@
 #-------------------------------------------------------------------------------
-# Copyright (c) 2020-2022, Arm Limited. All rights reserved.
+# SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
 # Copyright (c) 2021 STMicroelectronics. All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -81,7 +81,7 @@ target_sources(platform_s
         ${CMAKE_CURRENT_SOURCE_DIR}/hal/Src/stm32u5xx_ll_dlyb.c
         ${CMAKE_CURRENT_SOURCE_DIR}/hal/Src/stm32u5xx_hal_rtc.c
         ${CMAKE_CURRENT_SOURCE_DIR}/hal/Src/stm32u5xx_hal_rtc_ex.c
-        $<$<STREQUAL:"${TFM_FIH_PROFILE}","HIGH">:${PLATFORM_DIR}/ext/common/template/tfm_fih_rng.c>
+        $<$<STREQUAL:"${TFM_FIH_PROFILE}","HIGH">:${PLATFORM_DIR}/ext/common/template/tfm_fih_platform.c>
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/hal/Src/stm32u5xx_hal_hash.c
         ${CMAKE_CURRENT_SOURCE_DIR}/hal/Src/stm32u5xx_hal_hash_ex.c
@@ -90,6 +90,7 @@ target_sources(platform_s
         ${CMAKE_CURRENT_SOURCE_DIR}/hal/Src/stm32u5xx_hal_cryp_ex.c
         ${CMAKE_CURRENT_SOURCE_DIR}/hal/Src/stm32u5xx_hal_i2c.c
         ${CMAKE_CURRENT_SOURCE_DIR}/hal/Src/stm32u5xx_hal_i2c_ex.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/hal/Src/stm32u5xx_hal_icache.c
         ${STM_COMMON_DIR}/hal/Native_Driver/low_level_rng.c
         ${STM_COMMON_DIR}/hal/Native_Driver/nv_counters.c
 )
@@ -219,10 +220,7 @@ if(BL2)
             ${CMAKE_CURRENT_SOURCE_DIR}/hal/Src/stm32u5xx_hal_ospi.c
             ${CMAKE_CURRENT_SOURCE_DIR}/hal/Src/stm32u5xx_ll_dlyb.c
             ${STM_COMMON_DIR}/hal/Native_Driver/low_level_rng.c
-            ${STM_COMMON_DIR}/hal/provision/otp_provision.c
             ${STM_COMMON_DIR}/hal/Native_Driver/nv_counters.c
-            ${STM_COMMON_DIR}/hal/provision/nvm_init.c
-            ${STM_COMMON_DIR}/hal/provision/nvmcnt_init.c
     )
 
     target_compile_options(platform_bl2

@@ -56,6 +56,9 @@
 #define RSE_OTP_CONFIG_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG_SIZE (0)
 #endif /* RSE_PROVISIONING_DM_SIGN_KEY_CM_ROTPK_HASH_ALG */
 
+#define RSE_OTP_ROTPK_MAX_SIZE \
+    (RSE_OTP_CONFIG_MAX_SIZE_OF_THREE(RSE_OTP_CM_ROTPK_SIZE, RSE_OTP_DM_ROTPK_SIZE, 0))
+
 #define RSE_OTP_CM_ROTPK_SIZE                                                                     \
     (RSE_OTP_CONFIG_MAX_SIZE_OF_THREE(                                                            \
         RSE_OTP_CONFIG_TFM_BL1_2_ROTPK_HASH_ALG_SIZE, RSE_OTP_CONFIG_MCUBOOT_ROTPK_HASH_ALG_SIZE, \
@@ -66,6 +69,8 @@
 #define RSE_OTP_CM_ROTPK_MAX_REVOCATIONS 3
 #define RSE_ROUTING_TABLES_SIZE 0
 #define RSE_OTP_CM_RESERVED_SIZE 4
+#define RSE_OTP_COD_CMAC_SIZE 16
+#define RSE_OTP_COD_RAK_PUB_SIZE 96
 
 /* The following options control the BL1_2 area, and can be changed without
  * altering the ROM.
@@ -91,9 +96,10 @@
  */
 
 #define RSE_OTP_MAX_REPROVISIONINGS 8
-/* #define RSE_OTP_HAS_IAK_ENDORSEMENT_CERTIFICATE */
-/* #define RSE_OTP_ENDORSEMENT_CERTIFICATE_SIZE 0x60 */
-/* #define RSE_OTP_ENDORSEMENT_CERTIFICATE_METADATA_SIZE 0x30 */
+#define RSE_OTP_RESERVED_COUNTER_BYTES 0
+/* #define RSE_OTP_HAS_ENDORSEMENT_CERTIFICATE */
+#define RSE_OTP_ENDORSEMENT_CERTIFICATE_SIGNATURE_SIZE 0x60
+#define RSE_OTP_ENDORSEMENT_CERTIFICATE_PARAMETERS_SIZE 0x60
 
 /* 4 banks of NV counters are provided. Each bank must be a fixed size, so there
  * can be up to 4 different sizes of NV counters in the unlocked area, but with

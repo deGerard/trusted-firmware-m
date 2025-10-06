@@ -14,6 +14,7 @@
  */
 
 #include "cc3xx_psa_aead.h"
+#include "cc3xx_psa_cipher.h"
 #include "cc3xx_crypto_primitives_private.h"
 #include "cc3xx_misc.h"
 #include "cc3xx_stdlib.h"
@@ -29,6 +30,21 @@
  * To be able to include the PSA style configuration
  */
 #include "mbedtls/build_info.h"
+
+#if defined(PSA_WANT_ALG_CCM)
+/**
+ * @brief Verifies that tag_len for AES-CCM complies with what is
+ *        specified in NIST SP800-38C, i.e. {4,6,8,10,12,14,16}
+ *
+ * @param[in] tag_len  Tag lenth to be verified
+ *
+ * @return true        Tag length is compliant with NIST SP800-38C
+ * @return false       Tag length is invalid as per NIST SP800-38C
+ */
+static inline bool is_valid_ccm_tag_length(size_t tag_len) {
+    return ((tag_len >= 4) && (tag_len <= 16) && ((tag_len % 2) == 0));
+}
+#endif /* PSA_WANT_ALG_CCM */
 
 /**
  * @brief Integrated authenticated ciphering with associated data (single-part)
@@ -167,6 +183,11 @@ static psa_status_t aead_crypt(
     {
         cc3xx_aes_keysize_t key_size;
         cc3xx_aes_mode_t mode;
+#if !defined(CC3XX_CONFIG_AES_TUNNELLING_ENABLE) && defined(PSA_WANT_ALG_CCM)
+        uint8_t ctr[AES_IV_LEN] = {0};
+        bool ctr_required = ((default_alg == PSA_ALG_CCM) && (data_minus_tag > 0) &&
+                             (output_size > 0)) ? true : false;
+#endif /* !CC3XX_CONFIG_AES_TUNNELLING_ENABLE && PSA_WANT_ALG_CCM */
 
         switch (key_buffer_size) {
         case 16:
@@ -190,12 +211,40 @@ static psa_status_t aead_crypt(
 #endif
 #if defined(PSA_WANT_ALG_CCM)
         case PSA_ALG_CCM:
+            if (!is_valid_ccm_tag_length(tag_len)) {
+                return PSA_ERROR_INVALID_ARGUMENT;
+            }
             mode = CC3XX_AES_MODE_CCM;
             break;
 #endif
         default:
             return PSA_ERROR_INVALID_ARGUMENT;
         }
+
+#if !defined(CC3XX_CONFIG_AES_TUNNELLING_ENABLE) && defined(PSA_WANT_ALG_CCM)
+        if (ctr_required) {
+            c3xx_lowlevel_aes_ccm_init_ctr(ctr, nonce, nonce_length);
+
+            /* As AES CBC-MAC computes the tag on plaintext data,
+             * AES CTR decryption should come beforehand
+             */
+            if (dir == PSA_CRYPTO_DRIVER_DECRYPT) {
+                status = cc3xx_cipher_encrypt(attributes,
+                                            key_buffer, key_buffer_size,
+                                            PSA_ALG_CTR,
+                                            ctr, sizeof(ctr),
+                                            input, data_minus_tag,
+                                            output, output_size,
+                                            output_length);
+                if (status != PSA_SUCCESS) {
+                    return status;
+                }
+
+                /* CBC-MAC computes the tag on the decrypted data */
+                input = output;
+            }
+        }
+#endif /* !CC3XX_CONFIG_AES_TUNNELLING_ENABLE && PSA_WANT_ALG_CCM */
 
         err = cc3xx_lowlevel_aes_init((dir == PSA_CRYPTO_DRIVER_ENCRYPT) ?
                 CC3XX_AES_DIRECTION_ENCRYPT : CC3XX_AES_DIRECTION_DECRYPT,
@@ -234,6 +283,21 @@ static psa_status_t aead_crypt(
             status = cc3xx_to_psa_err(err);
             goto out;
         }
+
+#if !defined(CC3XX_CONFIG_AES_TUNNELLING_ENABLE) && defined(PSA_WANT_ALG_CCM)
+        if (ctr_required && (dir == PSA_CRYPTO_DRIVER_ENCRYPT)) {
+            status = cc3xx_cipher_encrypt(attributes,
+                                        key_buffer, key_buffer_size,
+                                        PSA_ALG_CTR,
+                                        ctr, sizeof(ctr),
+                                        input, data_minus_tag,
+                                        output, output_size,
+                                        output_length);
+            if (status != PSA_SUCCESS) {
+                return status;
+            }
+        }
+#endif /* !CC3XX_CONFIG_AES_TUNNELLING_ENABLE && PSA_WANT_ALG_CCM */
     }
     break;
 #endif /* PSA_WANT_KEY_TYPE_AES */
@@ -246,7 +310,7 @@ static psa_status_t aead_crypt(
     }
 
     /* Bytes produced on finish will take into account all bytes up to finish, minus the tag */
-    *output_length = bytes_produced_on_finish;
+    *output_length += bytes_produced_on_finish;
 
     if (dir == PSA_CRYPTO_DRIVER_ENCRYPT) {
         /* Put the tag in the correct place in output */
@@ -393,6 +457,104 @@ psa_status_t cc3xx_aead_update_ad(
     return PSA_ERROR_CORRUPTION_DETECTED;
 }
 
+#if !defined(CC3XX_CONFIG_AES_TUNNELLING_ENABLE) && defined(PSA_WANT_ALG_CCM)
+/**
+ * @brief Encrypt or decrypt a message fragment in an active AEAD AES-CCM operation.
+ *        This is only required when CryptoCell is operating in non-tunnelling
+ *        mode, in which case AES-CCM only computes the CBC-MAC tag, and thus a
+ *        separate AES-CTR call is required
+ *
+ * @param[in]  operation                Active AEAD operation.
+ * @param[in]  input                    Buffer containing the message fragment.
+ * @param[in]  input_length             Size of the input buffer in bytes.
+ * @param[out] output                   Buffer where the output is to be written.
+ * @param[in]  output_size              Size of the output buffer in bytes.
+ * @param[out] output_length            The number of bytes that make up the output.
+ * @param[in]  block_buf_size_in_use    Current AES DMA buffer usage in bytes.
+ *
+ * @return psa_status_t
+ */
+static psa_status_t cc3xx_aead_ccm_ctr_update(
+        cc3xx_aead_operation_t *operation,
+        const uint8_t *input,
+        size_t input_length,
+        uint8_t *output,
+        size_t output_size,
+        size_t *output_length,
+        size_t block_buf_size_in_use)
+{
+        psa_status_t status = PSA_ERROR_CORRUPTION_DETECTED;
+        cc3xx_err_t err;
+        struct cc3xx_aes_state_t *state = &operation->aes;
+        size_t processed_bytes = 0;
+        size_t counter_incr_val = (block_buf_size_in_use + input_length) / AES_BLOCK_SIZE;
+        uint32_t *key_buf = (state->key_id == CC3XX_AES_KEY_ID_USER_KEY) ?
+                            (uint32_t *)state->key_buf : NULL;
+
+        err = cc3xx_lowlevel_aes_init(CC3XX_AES_DIRECTION_ENCRYPT,
+                                      CC3XX_AES_MODE_CTR, state->key_id,
+                                      key_buf, state->key_size,
+                                      (uint32_t *)state->ctr, AES_IV_LEN);
+        if (err != CC3XX_ERR_SUCCESS) {
+            return cc3xx_to_psa_err(err);
+        }
+
+        if (block_buf_size_in_use > 0) {
+            size_t partial_len = ((block_buf_size_in_use + input_length) < AES_BLOCK_SIZE) ?
+                                    input_length : AES_BLOCK_SIZE - block_buf_size_in_use;
+            uint8_t scratch_block[AES_BLOCK_SIZE] = {0};
+            size_t current_output_size = cc3xx_lowlevel_aes_get_current_output_size();
+
+            cc3xx_lowlevel_aes_set_output_buffer(scratch_block, AES_BLOCK_SIZE);
+
+            err = cc3xx_lowlevel_aes_update(scratch_block, block_buf_size_in_use);
+            if (err != CC3XX_ERR_SUCCESS) {
+                return cc3xx_to_psa_err(err);
+            }
+
+            err = cc3xx_lowlevel_aes_update(input, partial_len);
+            if (err != CC3XX_ERR_SUCCESS) {
+                return cc3xx_to_psa_err(err);
+            }
+
+            cc3xx_lowlevel_dma_flush_buffer(false);
+
+            /* Write-back the partially-encrypted data */
+            memcpy(output, scratch_block + block_buf_size_in_use, partial_len);
+
+            processed_bytes = cc3xx_lowlevel_aes_get_current_output_size() -
+                                (current_output_size + block_buf_size_in_use);
+        }
+
+        if ((input_length - processed_bytes) > 0) {
+            const uint8_t *remaining_input = input + processed_bytes;
+            const size_t remaining_input_length = input_length - processed_bytes;
+            uint8_t *remaining_output = output + processed_bytes;
+            const size_t remaining_output_size = output_size - processed_bytes;
+            size_t current_output_size = cc3xx_lowlevel_aes_get_current_output_size();
+
+            cc3xx_lowlevel_aes_set_output_buffer(remaining_output, remaining_output_size);
+
+            err = cc3xx_lowlevel_aes_update(remaining_input, remaining_input_length);
+            if (err != CC3XX_ERR_SUCCESS) {
+                return cc3xx_to_psa_err(err);
+            }
+
+            cc3xx_lowlevel_dma_flush_buffer(false);
+
+            processed_bytes += cc3xx_lowlevel_aes_get_current_output_size() - current_output_size;
+        }
+
+        *output_length += processed_bytes;
+
+        if (counter_incr_val > 0) {
+            c3xx_lowlevel_aes_ccm_incr_ctr(state->ctr, counter_incr_val);
+        }
+
+        return PSA_SUCCESS;
+}
+#endif /* !CC3XX_CONFIG_AES_TUNNELLING_ENABLE && PSA_WANT_ALG_CCM */
+
 psa_status_t cc3xx_aead_update(
         cc3xx_aead_operation_t *operation,
         const uint8_t *input,
@@ -404,11 +566,45 @@ psa_status_t cc3xx_aead_update(
     cc3xx_err_t err;
     psa_status_t status = PSA_ERROR_CORRUPTION_DETECTED;
     size_t last_output_num_bytes = 0, current_output_size = 0;
+#if !defined(CC3XX_CONFIG_AES_TUNNELLING_ENABLE) && defined(PSA_WANT_ALG_CCM)
+    bool ctr_required;
+    size_t ctr_block_buf_size_in_use = 0;
+#endif /* !CC3XX_CONFIG_AES_TUNNELLING_ENABLE && PSA_WANT_ALG_CCM */
 
     CC3XX_ASSERT(operation != NULL);
-    CC3XX_ASSERT(input != NULL);
+    CC3XX_ASSERT(!input_length ^ (input != NULL));
     CC3XX_ASSERT(output != NULL);
     CC3XX_ASSERT(output_length != NULL);
+
+    /* Initialize this length to a safe value that might be overridden */
+    *output_length = 0;
+
+#if !defined(CC3XX_CONFIG_AES_TUNNELLING_ENABLE) && defined(PSA_WANT_ALG_CCM)
+    ctr_required = ((operation->key_type == PSA_KEY_TYPE_AES) &&
+                    (operation->aes.mode == CC3XX_AES_MODE_CCM) &&
+                    (input_length > 0 ) && (output_size > 0)) ? true : false;
+
+    if (ctr_required) {
+        ctr_block_buf_size_in_use = (operation->aes.crypted_length > 0) ?
+                                    operation->aes.dma_state.block_buf_size_in_use : 0;
+
+        if (operation->aes.direction == CC3XX_AES_DIRECTION_DECRYPT) {
+            status = cc3xx_aead_ccm_ctr_update(operation,
+                                               input,
+                                               input_length,
+                                               output,
+                                               output_size,
+                                               output_length,
+                                               ctr_block_buf_size_in_use);
+            if (status != PSA_SUCCESS) {
+                return status;
+            }
+
+            /* CBC-MAC computes the tag on plaintext data */
+            input = output;
+        }
+    }
+#endif /* !CC3XX_CONFIG_AES_TUNNELLING_ENABLE && PSA_WANT_ALG_CCM */
 
     /* This either restores the state or completes the init */
     status = cc3xx_internal_cipher_setup_complete(operation);
@@ -431,7 +627,7 @@ psa_status_t cc3xx_aead_update(
             &(operation->stream), input, input_length,
                 output, output_size, output_length);
 
-	if (status != PSA_SUCCESS) {
+        if (status != PSA_SUCCESS) {
             goto out_chacha20;
         }
 
@@ -505,21 +701,34 @@ out_chacha20:
 
         err = cc3xx_lowlevel_aes_update(input, input_length);
         if (err != CC3XX_ERR_SUCCESS) {
-            status = cc3xx_to_psa_err(err);
-            goto out_aes;
+            cc3xx_lowlevel_aes_uninit();
+            return cc3xx_to_psa_err(err);
         }
         current_output_size = cc3xx_lowlevel_aes_get_current_output_size();
 
-        *output_length = current_output_size - last_output_num_bytes;
+        *output_length += current_output_size - last_output_num_bytes;
 
         operation->last_output_num_bytes = current_output_size;
 
         cc3xx_lowlevel_aes_get_state(&operation->aes);
 
-        status = PSA_SUCCESS;
-out_aes:
         cc3xx_lowlevel_aes_uninit();
-        return status;
+
+#if !defined(CC3XX_CONFIG_AES_TUNNELLING_ENABLE) && defined(PSA_WANT_ALG_CCM)
+        if ((ctr_required) && (operation->aes.direction == CC3XX_AES_DIRECTION_ENCRYPT)) {
+            status = cc3xx_aead_ccm_ctr_update(operation,
+                                                input,
+                                                input_length,
+                                                output,
+                                                output_size,
+                                                output_length,
+                                                ctr_block_buf_size_in_use);
+            if (status != PSA_SUCCESS) {
+                return status;
+            }
+        }
+#endif /* !CC3XX_CONFIG_AES_TUNNELLING_ENABLE && PSA_WANT_ALG_CCM */
+        return PSA_SUCCESS;
 #endif /* PSA_WANT_KEY_TYPE_AES */
 
     default:
@@ -560,7 +769,10 @@ psa_status_t cc3xx_aead_finish(
         return PSA_SUCCESS;
     }
 
-    CC3XX_ASSERT(tag_size >= PSA_AEAD_TAG_LENGTH(operation->key_type, operation->key_bits, operation->alg));
+    /* Check if the tag_size is enough to hold the expected tag */
+    if (tag_size < PSA_AEAD_TAG_LENGTH(operation->key_type, operation->key_bits, operation->alg)) {
+        return PSA_ERROR_BUFFER_TOO_SMALL;
+    }
 
     /* cc3xx_aead_operation_t is just an alias to cc3xx_cipher_operation_t */
     switch (operation->key_type) {
@@ -619,6 +831,12 @@ out_chacha20:
 
         cc3xx_lowlevel_aes_set_output_buffer(ciphertext, ciphertext_size);
 
+        if ((operation->aes.crypted_length > 0) &&
+            (ciphertext_size < operation->aes.dma_state.block_buf_size_in_use)) {
+            status = PSA_ERROR_BUFFER_TOO_SMALL;
+            goto out_aes;
+        }
+
         err = cc3xx_lowlevel_aes_finish(local_tag, &bytes_produced_on_finish);
         if (err != CC3XX_ERR_SUCCESS) {
             status = cc3xx_to_psa_err(err);
@@ -676,6 +894,9 @@ psa_status_t cc3xx_aead_verify(
     /* Copy the tag in a 4-byte aligned local buffer */
     memcpy(local_tag, tag, tag_size);
 
+    /* Initialize */
+    *plaintext_length = 0;
+
     /* cc3xx_aead_operation_t is just an alias to cc3xx_cipher_operation_t */
     switch (operation->key_type) {
 #if defined(PSA_WANT_KEY_TYPE_CHACHA20) && defined(PSA_WANT_ALG_CHACHA20_POLY1305)
@@ -708,8 +929,7 @@ psa_status_t cc3xx_aead_verify(
         cc3xx_lowlevel_poly1305_finish(local_tag);
 
         /* Generate a random permutation */
-        cc3xx_lowlevel_rng_get_random_permutation(permutation_buf, tag_word_size,
-                                                  CC3XX_RNG_FAST);
+        cc3xx_lowlevel_rng_get_random_permutation(permutation_buf, tag_word_size);
 
         /* Check tag in "constant-time" */
         for (diff = 0, idx = 0; idx < tag_word_size; idx++) {
@@ -750,6 +970,11 @@ out_chacha20:
         cc3xx_lowlevel_aes_set_state(&(operation->aes));
 
         cc3xx_lowlevel_aes_set_output_buffer(plaintext, plaintext_size);
+
+        if (plaintext_size < operation->aes.dma_state.block_buf_size_in_use) {
+            status = PSA_ERROR_BUFFER_TOO_SMALL;
+            goto out_aes;
+        }
 
         err = cc3xx_lowlevel_aes_finish(local_tag, &bytes_produced_on_finish);
         if (err != CC3XX_ERR_SUCCESS) {

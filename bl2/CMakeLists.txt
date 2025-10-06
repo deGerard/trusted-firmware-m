@@ -57,6 +57,19 @@ endif()
 
 ############################### BL2_CRYPTO #####################################
 
+# Adds a static library target named 'bl2_fallback_rng' which includes the source file
+# 'src/psa_stub_rng.c'. This source file contains only the __weak stub implementation,
+# serving as a fallback for random number generation in case no other RNG is provided.
+if(NOT CRYPTO_HW_ACCELERATOR)
+    add_library(bl2_fallback_rng STATIC
+        src/psa_stub_rng.c
+    )
+    target_link_libraries(bl2_fallback_rng
+        PUBLIC
+            bl2_crypto_config
+    )
+endif()
+
 set(is_384_bit_curve "$<STREQUAL:${SIG_LEN},384>")
 set(is_256_bit_curve "$<STREQUAL:${SIG_LEN},256>")
 set(build_sha_384    "$<AND:${is_ec_signature},${is_384_bit_curve}>")
@@ -64,7 +77,7 @@ set(build_sha_256    "$<NOT:${build_sha_384}>")
 set(build_p256m      "$<IF:$<BOOL:${MBEDTLS_P256M_ENABLED}>,$<AND:${is_ec_signature},${is_256_bit_curve}>,0>")
 
 list(APPEND BL2_CRYPTO_SRC
-    $<$<BOOL:${MCUBOOT_USE_PSA_CRYPTO}>:src/thin_psa_crypto_core.c>
+    $<$<OR:$<BOOL:${MCUBOOT_USE_PSA_CRYPTO}>,$<BOOL:${MCUBOOT_USE_MBED_TLS}>>:${CMAKE_SOURCE_DIR}/lib/ext/thin-psa-crypto-core/thin_psa_crypto_core.c>
     ${MBEDCRYPTO_PATH}/library/platform.c
     ${MBEDCRYPTO_PATH}/library/platform_util.c
     ${MBEDCRYPTO_PATH}/library/memory_buffer_alloc.c
@@ -72,6 +85,7 @@ list(APPEND BL2_CRYPTO_SRC
     $<${build_sha_256}:${MBEDCRYPTO_PATH}/library/sha256.c>
     $<${build_sha_384}:${MBEDCRYPTO_PATH}/library/sha512.c>
     $<$<AND:${is_ec_signature},$<NOT:${build_p256m}>>:${MBEDCRYPTO_PATH}/library/psa_crypto_ecp.c>
+    $<$<AND:${is_ec_signature},$<NOT:${build_p256m}>>:${MBEDCRYPTO_PATH}/library/psa_util.c>
     $<$<AND:${is_ec_signature},$<NOT:${build_p256m}>>:${MBEDCRYPTO_PATH}/library/ecp.c>
     $<$<AND:${is_ec_signature},$<NOT:${build_p256m}>>:${MBEDCRYPTO_PATH}/library/ecp_curves.c>
     $<$<AND:${is_ec_signature},$<NOT:${build_p256m}>>:${MBEDCRYPTO_PATH}/library/ecdsa.c>
@@ -79,6 +93,7 @@ list(APPEND BL2_CRYPTO_SRC
     $<$<AND:${is_ec_signature},$<NOT:${build_p256m}>>:${MBEDCRYPTO_PATH}/library/bignum_core.c>
     $<$<AND:${is_ec_signature},$<NOT:${build_p256m}>>:${MBEDCRYPTO_PATH}/library/constant_time.c>
     $<${is_rsa_signature}:${MBEDCRYPTO_PATH}/library/psa_crypto_rsa.c>
+    $<${is_rsa_signature}:${MBEDCRYPTO_PATH}/library/psa_util.c>
     $<${is_rsa_signature}:${MBEDCRYPTO_PATH}/library/rsa.c>
     $<${is_rsa_signature}:${MBEDCRYPTO_PATH}/library/rsa_alt_helpers.c>
     $<${is_rsa_signature}:${MBEDCRYPTO_PATH}/library/bignum.c>
@@ -90,13 +105,21 @@ list(APPEND BL2_CRYPTO_SRC
     $<$<AND:${is_ec_signature},${build_p256m}>:${MBEDCRYPTO_PATH}/3rdparty/p256-m/p256-m_driver_entrypoints.c>
     $<$<AND:${is_ec_signature},${build_p256m}>:${MBEDCRYPTO_PATH}/3rdparty/p256-m/p256-m/p256-m.c>
     ${MBEDCRYPTO_PATH}/library/aes.c
+    $<$<BOOL:${MCUBOOT_ENCRYPT_KW}>:${MBEDCRYPTO_PATH}/library/nist_kw.c>
+    $<$<BOOL:${MCUBOOT_ENCRYPT_KW}>:${MBEDCRYPTO_PATH}/library/constant_time.c>
 )
 
 add_library(bl2_crypto STATIC ${BL2_CRYPTO_SRC})
 
+target_compile_definitions(bl2_crypto
+    PRIVATE
+        $<$<BOOL:${MCUBOOT_ROTPK_SIGN_POLICY}>:MCUBOOT_ROTPK_SIGN_POLICY>
+)
+
 target_include_directories(bl2_crypto
     PUBLIC
         ${MBEDCRYPTO_PATH}/library
+        ${CMAKE_CURRENT_SOURCE_DIR}/ext/mcuboot/include
 )
 
 target_compile_options(bl2_crypto
@@ -106,6 +129,7 @@ target_compile_options(bl2_crypto
 
 target_link_libraries(bl2_crypto
     PUBLIC
+        bootutil
         bl2_crypto_config
 )
 
@@ -129,14 +153,14 @@ add_executable(bl2
     $<$<BOOL:${CONFIG_GNU_SYSCALL_STUB_ENABLED}>:${CMAKE_SOURCE_DIR}/platform/ext/common/syscalls_stub.c>
 )
 
-add_subdirectory(ext/mcuboot)
-
 set_target_properties(bl2
     PROPERTIES
         SUFFIX ".axf"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
         ADDITIONAL_CLEAN_FILES "${CMAKE_BINARY_DIR}/generated;${CMAKE_BINARY_DIR}/bin/bl2.map"
 )
+
+add_subdirectory(ext/mcuboot)
 
 target_include_directories(bl2
     PRIVATE
@@ -150,6 +174,7 @@ target_link_libraries(bl2
         $<$<BOOL:${TEST_BL2}>:mcuboot_tests>
     PUBLIC
         bl2_crypto
+        $<$<NOT:$<BOOL:${CRYPTO_HW_ACCELERATOR}>>:bl2_fallback_rng>
 )
 
 target_compile_options(bl2
@@ -170,10 +195,12 @@ target_compile_definitions(bl2
     PRIVATE
         $<$<BOOL:${DEFAULT_MCUBOOT_FLASH_MAP}>:DEFAULT_MCUBOOT_FLASH_MAP>
         $<$<BOOL:${PLATFORM_PSA_ADAC_SECURE_DEBUG}>:PLATFORM_PSA_ADAC_SECURE_DEBUG>
+        $<$<BOOL:${PSA_ADAC_AS_TFM_RUNTIME_SERVICE}>:PSA_ADAC_AS_TFM_RUNTIME_SERVICE>
         $<$<BOOL:${TEST_BL2}>:TEST_BL2>
         $<$<BOOL:${TFM_PARTITION_FIRMWARE_UPDATE}>:TFM_PARTITION_FIRMWARE_UPDATE>
         $<$<AND:$<BOOL:${CONFIG_TFM_BOOT_STORE_MEASUREMENTS}>,$<NOT:$<BOOL:${CONFIG_TFM_BOOT_STORE_ENCODED_MEASUREMENTS}>>>:TFM_MEASURED_BOOT_API>
         $<$<BOOL:${MCUBOOT_BUILTIN_KEY}>:MCUBOOT_BUILTIN_KEY>
+        $<$<BOOL:${MCUBOOT_ENC_IMAGES}>:MCUBOOT_ENC_IMAGES>
 )
 
 add_convert_to_bin_target(bl2)

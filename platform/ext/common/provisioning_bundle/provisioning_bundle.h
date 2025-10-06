@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -54,6 +54,9 @@ __PACKED_STRUCT tfm_psa_rot_provisioning_data_t {
 };
 
 __PACKED_STRUCT bl2_assembly_and_test_provisioning_data_t {
+#ifdef MCUBOOT_ROTPK_SIGN_POLICY
+    uint32_t bl2_rotpk_policies;
+#endif /* MCUBOOT_ROTPK_SIGN_POLICY */
     uint8_t bl2_rotpk_0[PROV_ROTPK_DATA_SIZE];
     uint8_t bl2_rotpk_1[PROV_ROTPK_DATA_SIZE];
 #if (MCUBOOT_IMAGE_NUMBER > 2)

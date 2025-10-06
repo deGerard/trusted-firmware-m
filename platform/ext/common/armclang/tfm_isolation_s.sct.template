@@ -171,10 +171,7 @@ LR_CODE S_CODE_START S_CODE_SIZE {
      * The first loaded partition will be inited at last in SFN model.
      */
     TFM_SP_LOAD_LIST +0 ALIGN 4 {
-        *(.part_load_priority_00)
-        *(.part_load_priority_01)
-        *(.part_load_priority_02)
-        *(.part_load_priority_03)
+        *(.part_load)
     }
 
     /* Position tag: End of RO-data (unprivileged, execute-never) */
@@ -184,6 +181,30 @@ LR_CODE S_CODE_START S_CODE_SIZE {
     /* Position tag: End of code + RO-data */
     PT_RO_END +0 ALIGN TFM_LINKER_PT_RO_ALIGNMENT EMPTY 0x0 {
     }
+
+#ifdef S_RUNTIME_ITCM_START
+    /* Position tag: Start of SPM code (privileged) */
+    PT_SPM_CODE_START S_RUNTIME_ITCM_START ALIGN TFM_LINKER_SPM_CODE_ALIGNMENT EMPTY 0x0 { }
+
+    ER_SPM_CODE +0 {
+        *tfm_spm*(+RO)
+    }
+
+    /* Position tag: End of SPM code (privileged) */
+    PT_SPM_CODE_END +0 ALIGN TFM_LINKER_SPM_CODE_ALIGNMENT EMPTY 0x0 {
+    }
+
+    /* This empty, zero long execution region is here to mark the limit address
+     * of the last execution region that is allocated in ITCM.
+     */
+    ITCM_WATERMARK +0 EMPTY 0x0 {
+    }
+
+    /* Make sure that the sections allocated in the ITCM does not exceed the
+     * size of the ITCM available.
+     */
+    ScatterAssert(ImageLimit(ITCM_WATERMARK) <= S_RUNTIME_ITCM_START + S_RUNTIME_ITCM_SIZE)
+#endif
 
 #ifdef S_RAM_CODE_START
     /* Flash drivers code that gets copied from Flash */
@@ -316,6 +337,7 @@ LR_CODE S_CODE_START S_CODE_SIZE {
 #endif
 
 {% for partition in partitions %}
+    {% if not partition.manifest.place_in_dtcm %}
     {% if partition.manifest.type == 'PSA-ROT' %}
 
     /* Position tag: Start of PSA RoT partition's private data */
@@ -342,6 +364,7 @@ LR_CODE S_CODE_START S_CODE_SIZE {
     }
 
     {% endif %}
+    {% endif %}
 {% endfor %}
 
     ER_TFM_DATA +0 {
@@ -350,18 +373,12 @@ LR_CODE S_CODE_START S_CODE_SIZE {
 
     /* The runtime partition placed order is same as load partition */
     ER_PART_RT_POOL +0 ALIGN 4 {
-        *(.bss.part_runtime_priority_00)
-        *(.bss.part_runtime_priority_01)
-        *(.bss.part_runtime_priority_02)
-        *(.bss.part_runtime_priority_03)
+        *(.bss.part_runtime)
     }
 
     /* The runtime service placed order is same as load partition */
     ER_SERV_RT_POOL +0 ALIGN 4 {
-        *(.bss.serv_runtime_priority_00)
-        *(.bss.serv_runtime_priority_01)
-        *(.bss.serv_runtime_priority_02)
-        *(.bss.serv_runtime_priority_03)
+        *(.bss.serv_runtime)
     }
 
     /* Position tag: End of PSA RoT data (privileged) */
@@ -384,6 +401,63 @@ LR_CODE S_CODE_START S_CODE_SIZE {
      * size of the SRAM available.
      */
     ScatterAssert(ImageLimit(SRAM_WATERMARK) <= S_DATA_START + S_DATA_SIZE)
+
+{# Check whether DTCM needs to be included. #}
+{% set outer_namespace = namespace(use_dtcm=false) %}
+{% for partition in partitions %}
+  {% if partition.manifest.place_in_dtcm %}
+    {% set outer_namespace.use_dtcm = true %}
+  {% endif %}
+{% endfor %}
+
+{% if outer_namespace.use_dtcm %}
+    /* Position tag: Start of DTCM */
+    PT_DTCM_START S_RUNTIME_DTCM_START ALIGN TFM_LINKER_PT_PSA_ROT_DATA_ALIGNMENT EMPTY 0x0 { }
+{% endif %}
+
+{% for partition in partitions %}
+  {% if partition.manifest.place_in_dtcm %}
+  {% if partition.manifest.type == 'PSA-ROT' %}
+
+    /* Position tag: Start of PSA RoT partition's private data */
+    PT_{{partition.manifest.name}}_PRIVATE_DATA_START +0 ALIGN TFM_LINKER_PT_PROT_PART_PRIVATE_DATA_ALIGNMENT EMPTY 0x0 {
+    }
+
+    ER_{{partition.manifest.name}}_RWZI +0 {
+    {% if partition.attr.linker_pattern.library_list %}
+        {% for pattern in partition.attr.linker_pattern.library_list %}
+        {{pattern}}(+RW +ZI)
+        {% endfor %}
+    {% endif %}
+    {% if partition.attr.linker_pattern.object_list %}
+        {% for pattern in partition.attr.linker_pattern.object_list %}
+        {{pattern}}(+RW +ZI)
+        {% endfor %}
+    {% endif %}
+        *({{partition.manifest.name}}_PSA-ROT_ATTR_RW)
+        *({{partition.manifest.name}}_PSA-ROT_ATTR_ZI)
+    }
+
+    /* Position tag: End of PSA RoT partition's private data */
+    PT_{{partition.manifest.name}}_PRIVATE_DATA_END +0 ALIGN TFM_LINKER_PT_PROT_PART_PRIVATE_DATA_ALIGNMENT EMPTY 0x0 {
+    }
+
+  {% endif %}
+  {% endif %}
+{% endfor %}
+
+{% if outer_namespace.use_dtcm %}
+    /* This empty, zero long execution region is here to mark the limit address
+     * of the last execution region that is allocated in DTCM.
+     */
+    DTCM_WATERMARK +0 EMPTY 0x0 {
+    }
+
+    /* Make sure that the sections allocated in the DTCM does not exceed the
+     * size of the DTCM available.
+     */
+    ScatterAssert(ImageLimit(DTCM_WATERMARK) <= S_RUNTIME_DTCM_START + S_RUNTIME_DTCM_SIZE)
+{% endif %}
 }
 
 LR_NS_PARTITION NS_PARTITION_START {

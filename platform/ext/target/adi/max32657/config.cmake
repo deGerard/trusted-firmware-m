@@ -12,7 +12,7 @@ set(TFM_BL2_SIGNING_KEY_PATH            ""          CACHE FILEPATH  "")
 set(BL2                                 ON         CACHE BOOL     "Whether to build BL2")
 set(CONFIG_TFM_USE_TRUSTZONE            ON)
 set(TFM_PARTITION_PROTECTED_STORAGE     ON           CACHE BOOL      "Enable Protected Stroage partition")
-set(TFM_PARTITION_PLATFORM              OFF          CACHE BOOL      "Enable Platform partition")
+set(TFM_PARTITION_PLATFORM              ON           CACHE BOOL      "Enable Platform partition")
 set(TFM_PARTITION_CRYPTO                ON          CACHE BOOL      "Enable Crypto partition")
 set(TFM_PARTITION_INTERNAL_TRUSTED_STORAGE ON       CACHE BOOL      "Enable Internal Trusted Storage partition")
 set(TFM_PARTITION_NS_AGENT_TZ           ON         CACHE BOOL      "Enable Non-Secure Agent in Secure partition")
@@ -21,6 +21,9 @@ set(CONFIG_TFM_BOOT_STORE_ENCODED_MEASUREMENTS  ON   CACHE BOOL      "Enable sto
 set(TFM_PARTITION_INITIAL_ATTESTATION           ON   CACHE BOOL      "Enable Initial Attestation partition")
 set(CONFIG_TFM_HALT_ON_CORE_PANIC               ON   CACHE BOOL      "On fatal errors in the secure firmware, halt instead of rebooting.")
 set(PLATFORM_DEFAULT_OTP                OFF          CACHE BOOL      "Use trusted on-chip flash to implement OTP memory")
+
+set(ITS_ENCRYPTION                      OFF          CACHE BOOL      "Enable authenticated encryption of ITS files using platform specific APIs")
+set(ITS_CRYPTO_AEAD_ALG                 ITS_AES_GCM  CACHE STRING    "The AEAD algorithm to use for authenticated encryption in Internal Storage")
 
 set(PLATFORM_DEFAULT_PROVISIONING       ON        CACHE BOOL      "Use default provisioning implementation")
 set(PROVISIONING_DATA_PADDED_SIZE       "0x400"   CACHE STRING    "")
@@ -32,15 +35,17 @@ set(HAL_ADI_PATH                        "DOWNLOAD"  CACHE PATH      "Path to hal
 set(HAL_ADI_VERSION                     "dd1c525"   CACHE STRING    "The version of hal_adi to use")
 
 set(MCUBOOT_USE_PSA_CRYPTO             ON          CACHE BOOL      "Use PSA Crypto for MCUBOOT")
-set(CRYPTO_HW_ACCELERATOR              OFF)
 
-if (CONFIG_TFM_PROFILE_SMALL)
+set(CRYPTO_HW_ACCELERATOR              ON          CACHE BOOL      "Enable hardware crypto accelerator")
+set(CRYPTO_HW_ACCELERATOR_TYPE         "adi"       CACHE STRING    "The hardware accelerator platform")
+
+if (TFM_PROFILE STREQUAL "profile_small")
     # Static Buffer size for MBEDTLS allocations - Has been increased from the default value of small profile
-    # to ensure that initial attestation testcases in regression build passes
-    add_compile_definitions(CRYPTO_ENGINE_BUF_SIZE=0x500)
+    # to ensure that initial attestation testcases in regression build passes and generate random number successfully.
+    add_compile_definitions(CRYPTO_ENGINE_BUF_SIZE=0x800)
 endif()
 
 if(TFM_PARTITION_PROTECTED_STORAGE)
     # Enable single part functions in crypto library needed for PS Encryption
-    set(CRYPTO_SINGLE_PART_FUNCS_DISABLED OFF CACHE BOOL "Disable single part functions in crypto library") 
+    set(CRYPTO_SINGLE_PART_FUNCS_DISABLED OFF CACHE BOOL "Disable single part functions in crypto library")
 endif()

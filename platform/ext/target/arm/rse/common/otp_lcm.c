@@ -132,8 +132,7 @@ struct otp_mapping_t{
     [PLAT_OTP_ID_RSE_ID] = USER_AREA_MAPPING(cm, rse_id),
 #endif
 #ifdef RSE_OTP_HAS_ROUTING_TABLES
-    [PLAT_OTP_ID_RSE_TO_RSE_SENDER_ROUTING_TABLE] = USER_AREA_MAPPING(cm, rse_to_rse_sender_routing_table),
-    [PLAT_OTP_ID_RSE_TO_RSE_RECEIVER_ROUTING_TABLE] = USER_AREA_MAPPING(cm, rse_to_rse_receiver_routing_table),
+    [PLAT_OTP_ID_RSE_TO_RSE_ROUTING_TABLE] = USER_AREA_MAPPING(dm, routing_tables.routing_table),
 #endif
 };
 
@@ -201,7 +200,7 @@ static enum tfm_plat_err_t otp_read_encrypted(uint32_t offset, uint32_t len,
     cc3xx_lowlevel_aes_finish(NULL, NULL);
 
     return TFM_PLAT_ERR_SUCCESS;
-#endif
+#endif /* RSE_ENCRYPTED_OTP_KEYS */
 }
 
 static enum tfm_plat_err_t otp_write(uint32_t offset, uint32_t len,
@@ -251,7 +250,7 @@ static enum tfm_plat_err_t otp_write_encrypted(uint32_t offset, uint32_t len,
     cc3xx_lowlevel_aes_finish(NULL, NULL);
 
     return TFM_PLAT_ERR_SUCCESS;
-#endif
+#endif /* RSE_ENCRYPTED_OTP_KEYS */
 }
 
 static enum tfm_plat_err_t load_area_info(enum lcm_lcs_t lcs)
@@ -281,12 +280,47 @@ static enum tfm_plat_err_t load_area_info(enum lcm_lcs_t lcs)
             return err;
         }
     }
-#endif
+#endif /* RSE_OTP_HAS_SOC_AREA */
 
-    /* In CM mode, we don't have these provisioned
+    /* In CM we don't have these provisioned, and in RMA don't
+     * care about checking them. But, in case of RMA, cache the
+     * info variables before returning, so that the structures
+     * can be access correctly after this point in LCS_RMA
      */
-    if (lcs == LCM_LCS_CM) {
+    switch(lcs) {
+    case LCM_LCS_RMA:
+    {
+        bool has_invalid_pointers = false;
+#ifdef RSE_OTP_HAS_CM_AREA
+        cm_area_info = P_RSE_OTP_HEADER->cm_area_info;
+        has_invalid_pointers =
+            !P_RSE_OTP_CM_IS_VALID ? true : has_invalid_pointers;
+#endif
+#ifdef RSE_OTP_HAS_BL1_2
+        bl1_2_area_info = P_RSE_OTP_HEADER->bl1_2_area_info;
+        has_invalid_pointers =
+            !P_RSE_OTP_BL1_2_IS_VALID ? true : has_invalid_pointers;
+#endif
+#ifdef RSE_OTP_HAS_DM_AREA
+        dm_area_info = P_RSE_OTP_HEADER->dm_area_info;
+        has_invalid_pointers =
+            !P_RSE_OTP_DM_IS_VALID ? true : has_invalid_pointers;
+#endif
+#ifdef RSE_OTP_HAS_DYNAMIC_AREA
+        dynamic_area_info = P_RSE_OTP_HEADER->dynamic_area_info;
+        has_invalid_pointers =
+            !P_RSE_OTP_DYNAMIC_IS_VALID ? true : has_invalid_pointers;
+#endif
+        if (has_invalid_pointers) {
+            return TFM_PLAT_ERR_OTP_INIT_RMA_AREA_SETUP_FAILED;
+        }
+    }
+        /* Allowing fallthrough */
+    case LCM_LCS_CM:
         return TFM_PLAT_ERR_SUCCESS;
+    default:
+        /* Continue checking of area info */
+        break;
     }
 
 #ifdef RSE_OTP_HAS_CM_AREA
@@ -301,7 +335,7 @@ static enum tfm_plat_err_t load_area_info(enum lcm_lcs_t lcs)
         rse_permanently_disable_device(RSE_PERMANENT_ERROR_OTP_INTEGRITY_CHECK_FAILURE);
         return TFM_PLAT_ERR_OTP_INIT_CM_ZERO_COUNT_ERR;
     }
-#endif
+#endif /* RSE_OTP_HAS_CM_AREA */
 
 #ifdef RSE_OTP_HAS_BL1_2
     bl1_2_area_info = P_RSE_OTP_HEADER->bl1_2_area_info;
@@ -315,7 +349,7 @@ static enum tfm_plat_err_t load_area_info(enum lcm_lcs_t lcs)
         rse_permanently_disable_device(RSE_PERMANENT_ERROR_OTP_INTEGRITY_CHECK_FAILURE);
         return TFM_PLAT_ERR_OTP_INIT_BL1_2_ZERO_COUNT_ERR;
     }
-#endif
+#endif /* RSE_OTP_HAS_BL1_2 */
 
 #ifdef RSE_OTP_HAS_SOC_AREA
     err = rse_count_zero_bits((uint8_t *)&soc_area_info, sizeof(soc_area_info), &zero_count);
@@ -327,7 +361,7 @@ static enum tfm_plat_err_t load_area_info(enum lcm_lcs_t lcs)
         rse_permanently_disable_device(RSE_PERMANENT_ERROR_OTP_INTEGRITY_CHECK_FAILURE);
         return TFM_PLAT_ERR_OTP_INIT_SOC_ZERO_COUNT_ERR;
     }
-#endif
+#endif /* RSE_OTP_HAS_SOC_AREA */
 
     /* If the DM is setting the size of the DM area then we don't know the size
      * of this (and the dynamic area) during the DM provisioning LCS, so don't
@@ -337,7 +371,7 @@ static enum tfm_plat_err_t load_area_info(enum lcm_lcs_t lcs)
     if (lcs == LCM_LCS_DM) {
         return TFM_PLAT_ERR_SUCCESS;
     }
-#endif
+#endif /* DM_SETS_DM_AND_DYNAMIC_AREA_SIZE */
 
 #ifdef RSE_OTP_HAS_DM_AREA
     dm_area_info = P_RSE_OTP_HEADER->dm_area_info;
@@ -351,7 +385,7 @@ static enum tfm_plat_err_t load_area_info(enum lcm_lcs_t lcs)
         rse_permanently_disable_device(RSE_PERMANENT_ERROR_OTP_INTEGRITY_CHECK_FAILURE);
         return TFM_PLAT_ERR_OTP_INIT_DM_ZERO_COUNT_ERR;
     }
-#endif
+#endif /* RSE_OTP_HAS_DM_AREA */
 
 #ifdef RSE_OTP_HAS_DYNAMIC_AREA
     dynamic_area_info = P_RSE_OTP_HEADER->dynamic_area_info;
@@ -365,7 +399,7 @@ static enum tfm_plat_err_t load_area_info(enum lcm_lcs_t lcs)
         rse_permanently_disable_device(RSE_PERMANENT_ERROR_OTP_INTEGRITY_CHECK_FAILURE);
         return TFM_PLAT_ERR_OTP_INIT_DYNAMIC_ZERO_COUNT_ERR;
     }
-#endif
+#endif /* RSE_OTP_HAS_DYNAMIC_AREA */
 
     return TFM_PLAT_ERR_SUCCESS;
 }
@@ -375,7 +409,7 @@ static enum tfm_plat_err_t setup_rotpk_info(enum lcm_lcs_t lcs) {
     uint32_t cm_rotpk_area_index;
     uint32_t dm_rotpk_area_index;
 
-    if (lcs == LCM_LCS_CM) {
+    if (lcs == LCM_LCS_CM || lcs == LCM_LCS_RMA) {
         return TFM_PLAT_ERR_SUCCESS;
     }
 
@@ -383,7 +417,7 @@ static enum tfm_plat_err_t setup_rotpk_info(enum lcm_lcs_t lcs) {
     if (lcs == LCM_LCS_DM) {
         return TFM_PLAT_ERR_SUCCESS;
     }
-#endif
+#endif /* RSE_OTP_DM_SETS_DM_AND_DYNAMIC_AREA_SIZE */
 
     assert(IS_RSE_OTP_AREA_VALID(DYNAMIC));
 
@@ -421,7 +455,7 @@ static enum tfm_plat_err_t setup_rotpk_info(enum lcm_lcs_t lcs) {
             otp_mapping[PLAT_OTP_ID_CM_ROTPK + idx] = mapping;
         }
     }
-#endif
+#endif /* RSE_OTP_HAS_CM_AREA */
 
 #ifdef RSE_OTP_HAS_DM_AREA
 #if RSE_OTP_DM_ROTPK_MAX_REVOCATIONS > 0
@@ -457,12 +491,13 @@ static enum tfm_plat_err_t setup_rotpk_info(enum lcm_lcs_t lcs) {
             otp_mapping[PLAT_OTP_ID_DM_ROTPK + idx] = mapping;
         }
     }
-#endif
+#endif /* RSE_OTP_HAS_DM_AREA */
 
     return TFM_PLAT_ERR_SUCCESS;
 }
 
-static void setup_nv_counter_info(void) {
+static void setup_nv_counter_info(void)
+{
     for (uint32_t idx = 0; idx < RSE_OTP_NV_COUNTERS_BANK_0_AMOUNT; idx++) {
         struct otp_mapping_t mapping =
             USER_AREA_MAPPING(dynamic, security_version_counters_bank_0[idx]);
@@ -509,7 +544,7 @@ static enum tfm_plat_err_t check_areas_for_tampering(enum lcm_lcs_t lcs)
         FATAL_ERR(TFM_PLAT_ERR_OTP_INIT_CM_ZERO_COUNT_ERR);
         return err;
     }
-#endif
+#endif /* RSE_OTP_HAS_CM_AREA */
 
 #ifdef RSE_OTP_HAS_BL1_2
     err = rse_check_zero_bit_count((uint8_t *)&P_RSE_OTP_BL1_2->zero_count + sizeof(uint32_t),
@@ -520,18 +555,18 @@ static enum tfm_plat_err_t check_areas_for_tampering(enum lcm_lcs_t lcs)
         FATAL_ERR(TFM_PLAT_ERR_OTP_INIT_BL1_2_ZERO_COUNT_ERR);
         return err;
     }
-#endif
+#endif /* RSE_OTP_HAS_BL1_2 */
 
 #ifdef RSE_OTP_HAS_SOC_AREA
-    err = rse_check_zero_bit_count((uint8_t *)&P_RSE_OTP_SOC->unique_id,
-                                   sizeof(P_RSE_OTP_SOC->unique_id),
-                                   P_RSE_OTP_SOC->zero_count);
+    err = rse_check_zero_bit_count((uint8_t *)&P_RSE_OTP_SOC->soc_id_area.unique_id,
+                                   sizeof(P_RSE_OTP_SOC->soc_id_area.unique_id),
+                                   P_RSE_OTP_SOC->soc_id_area.zero_count_unique_id);
     if (err != TFM_PLAT_ERR_SUCCESS) {
         rse_permanently_disable_device(RSE_PERMANENT_ERROR_OTP_INTEGRITY_CHECK_FAILURE);
         FATAL_ERR(TFM_PLAT_ERR_OTP_INIT_SOC_ZERO_COUNT_ERR);
         return err;
     }
-#endif
+#endif /* RSE_OTP_HAS_SOC_AREA */
 
     /* If we are in DM LCS, don't check the DM area */
     if (lcs == LCM_LCS_DM) {
@@ -548,7 +583,7 @@ static enum tfm_plat_err_t check_areas_for_tampering(enum lcm_lcs_t lcs)
         FATAL_ERR(TFM_PLAT_ERR_OTP_INIT_DM_ZERO_COUNT_ERR);
         return err;
     }
-#endif
+#endif /* RSE_OTP_HAS_DM_AREA */
 
     return TFM_PLAT_ERR_SUCCESS;
 }
@@ -731,6 +766,7 @@ static enum tfm_plat_err_t write_zero_counts(enum lcm_lcs_t new_lcs)
             return err;
         }
 
+#if !defined(RSE_NON_ENDORSED_DM_PROVISIONING)
         dm_rotpk_area_info.offset = dm_area_info.offset + offsetof(struct rse_otp_dm_area_t, rotpk_areas);
         dm_rotpk_area_info.size = sizeof(struct rse_otp_dm_rotpk_area_t);
         err = calc_write_zero_count((uintptr_t)&P_RSE_OTP_DM_ROTPK->zero_count + sizeof(uint32_t),
@@ -739,6 +775,7 @@ static enum tfm_plat_err_t write_zero_counts(enum lcm_lcs_t new_lcs)
         if (err != TFM_PLAT_ERR_SUCCESS) {
             return err;
         }
+#endif /* RSE_NON_ENDORSED_DM_PROVISIONING */
 #endif /* RSE_OTP_HAS_DM_AREA */
     }
 
@@ -763,13 +800,10 @@ static enum tfm_plat_err_t otp_write_lcs(size_t in_len, const uint8_t *in)
 }
 
 #ifdef RSE_OTP_HAS_LFT_COUNTER
-static enum tfm_plat_err_t check_lft_counter(enum lcm_lcs_t lcs) {
+static enum tfm_plat_err_t check_lft_counter(void)
+{
     enum tfm_plat_err_t plat_err;
     uint32_t counter_value;
-
-    if (lcs == LCM_LCS_CM) {
-        return TFM_PLAT_ERR_SUCCESS;
-    }
 
     /* If the LFT counter should not cause bricking of the device we just return */
     if (!rse_otp_policy_check(P_RSE_OTP_CM->config_flags, CM_POLICIES_LFT_COUNTER_MAX_BRICKS_DEVICE)) {
@@ -791,7 +825,8 @@ static enum tfm_plat_err_t check_lft_counter(enum lcm_lcs_t lcs) {
 #endif /* RSE_OTP_HAS_LFT_COUNTER */
 
 #ifdef RSE_OTP_HAS_KRTL_USAGE_COUNTER
-static enum tfm_plat_err_t check_krtl_counter(void) {
+static enum tfm_plat_err_t check_krtl_counter(void)
+{
     enum tfm_plat_err_t plat_err;
     uint32_t counter_value;
 
@@ -808,9 +843,10 @@ static enum tfm_plat_err_t check_krtl_counter(void) {
 }
 #endif /* RSE_OTP_HAS_KRTL_USAGE_COUNTER */
 
-static enum tfm_plat_err_t check_device_status(void) {
+static enum tfm_plat_err_t check_device_status(void)
+{
     /* device_status[31:17] if non-zero describes a bricked device */
-    if (P_RSE_OTP_HEADER->device_status >> 17 != 0) {
+    if ((P_RSE_OTP_HEADER->device_status >> 17) != 0) {
         FATAL_ERR(TFM_PLAT_ERR_OTP_INIT_INVALID_DEVICE_STATUS);
         return TFM_PLAT_ERR_OTP_INIT_INVALID_DEVICE_STATUS;
     }
@@ -852,19 +888,26 @@ enum tfm_plat_err_t tfm_plat_otp_init(void)
 
     setup_nv_counter_info();
 
-#ifdef RSE_OTP_HAS_LFT_COUNTER
-    err = check_lft_counter(lcs);
-    if (err != TFM_PLAT_ERR_SUCCESS) {
-        return err;
+    /* In RMA LCS do not check LFT/KRTL/Device status */
+    if (lcs == LCM_LCS_RMA) {
+        return TFM_PLAT_ERR_SUCCESS;
     }
-#endif
+
+#ifdef RSE_OTP_HAS_LFT_COUNTER
+    if (lcs != LCM_LCS_CM) {
+        err = check_lft_counter();
+        if (err != TFM_PLAT_ERR_SUCCESS) {
+            return err;
+        }
+    }
+#endif /* RSE_OTP_HAS_LFT_COUNTER */
 
 #ifdef RSE_OTP_HAS_KRTL_USAGE_COUNTER
     err = check_krtl_counter();
     if (err != TFM_PLAT_ERR_SUCCESS) {
         return err;
     }
-#endif
+#endif /* RSE_OTP_HAS_KRTL_USAGE_COUNTER */
 
     err = check_device_status();
     if (err != TFM_PLAT_ERR_SUCCESS) {
@@ -894,7 +937,7 @@ enum tfm_plat_err_t tfm_plat_otp_read(enum tfm_otp_element_id_t id,
         return TFM_PLAT_ERR_OTP_READ_INVALID_INPUT;
     }
 
-    if (id > PLAT_OTP_ID_MAX) {
+    if (id >= PLAT_OTP_ID_MAX) {
         FATAL_ERR(TFM_PLAT_ERR_OTP_READ_INVALID_ID);
         return TFM_PLAT_ERR_OTP_READ_INVALID_ID;
     }
@@ -928,7 +971,7 @@ enum tfm_plat_err_t tfm_plat_otp_write(enum tfm_otp_element_id_t id,
         return TFM_PLAT_ERR_OTP_WRITE_INVALID_INPUT;
     }
 
-    if (id > PLAT_OTP_ID_MAX) {
+    if (id >= PLAT_OTP_ID_MAX) {
         FATAL_ERR(TFM_PLAT_ERR_OTP_WRITE_INVALID_ID);
         return TFM_PLAT_ERR_OTP_WRITE_INVALID_ID;
     }
@@ -957,8 +1000,12 @@ enum tfm_plat_err_t tfm_plat_otp_write(enum tfm_otp_element_id_t id,
 enum tfm_plat_err_t tfm_plat_otp_get_size(enum tfm_otp_element_id_t id,
                                           size_t *size)
 {
+    if (size == NULL) {
+        FATAL_ERR(TFM_PLAT_ERR_PLAT_OTP_GET_SIZE_INVALID_INPUT);
+        return TFM_PLAT_ERR_PLAT_OTP_GET_SIZE_INVALID_INPUT;
+    }
 
-    if (id > PLAT_OTP_ID_MAX) {
+    if (id >= PLAT_OTP_ID_MAX) {
         FATAL_ERR(TFM_PLAT_ERR_PLAT_OTP_GET_SIZE_INVALID_ID);
         return TFM_PLAT_ERR_PLAT_OTP_GET_SIZE_INVALID_ID;
     }
@@ -992,8 +1039,8 @@ enum tfm_plat_err_t tfm_plat_otp_secure_provisioning_start(void)
 
 enum tfm_plat_err_t tfm_plat_otp_secure_provisioning_finish(void)
 {
-    tfm_hal_system_reset();
-
+    tfm_hal_system_reset(TFM_PLAT_SWSYN_DEFAULT);
+    __builtin_unreachable();
     /* We'll never get here */
     return TFM_PLAT_ERR_SUCCESS;
 }

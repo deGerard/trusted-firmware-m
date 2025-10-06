@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2022 Cypress Semiconductor Corporation (an Infineon company)
  * or an affiliate of Cypress Semiconductor Corporation. All rights reserved.
- * Copyright (c) 2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -18,6 +18,14 @@
  * alignment. */
 #define ROUND_UP_TO_MULTIPLE(number, multiple) \
     ((((number) + (multiple) - 1) / (multiple)) * (multiple))
+
+#define CHECK_ALIGNMENT_4(size) ASSERT((size) % 4 == 0, #size)
+
+/* For Cortex-M0+ VTOR: 256-byte vector table is at the offset 0x00 of the image.
+ * To keep that table in one block, the image base must be a multiple of 0x100.
+ * For reference: https://developer.arm.com/documentation/ddi0419/latest/
+ */
+#define CHECK_ALIGNMENT_256(addr) ASSERT((addr % 256) == 0, #addr)
 
 /* Default alignment for linker file sections is set to 32 because ARM TrustZone
  * protection units (SAU and MPU) require regions to be 32 bytes aligned. */
@@ -99,6 +107,10 @@
 
 #ifndef TFM_LINKER_PT_PROT_PART_PRIVATE_DATA_ALIGNMENT
 #define TFM_LINKER_PT_PROT_PART_PRIVATE_DATA_ALIGNMENT  TFM_LINKER_DEFAULT_ALIGNMENT
+#endif
+
+#ifndef TFM_LINKER_SPM_CODE_ALIGNMENT
+#define TFM_LINKER_SPM_CODE_ALIGNMENT  TFM_LINKER_DEFAULT_ALIGNMENT
 #endif
 
 /* Alignment of stack of NS agent TZ partition. This should not be needed once

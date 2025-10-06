@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  *
  */
-
+#include <string.h>
 #include "boot_hal.h"
 #include "region.h"
 #include "device_definition.h"
@@ -15,7 +15,6 @@
 #include "platform_base_address.h"
 #include "uart_stdout.h"
 #include "tfm_plat_otp.h"
-#include "trng.h"
 #include "kmu_drv.h"
 #include "platform_regs.h"
 #include "tfm_log.h"
@@ -23,7 +22,6 @@
 #include "fih.h"
 #include "cc3xx_drv.h"
 #endif /* CRYPTO_HW_ACCELERATOR */
-#include <string.h>
 #include "cmsis_compiler.h"
 #ifdef RSE_USE_HOST_FLASH
 #include "fip_parser.h"
@@ -45,17 +43,62 @@
 #endif
 #include "bl1_2_debug.h"
 
+/* FixMe: Move CASSERT() into a generic support header */
+/* Two-level macro so __LINE__ expands before token-pasting */
+#define __CONCAT_(a, b) a##b
+#define _CONCAT(a, b)  __CONCAT(a, b)
 
-//TODO: This debug state needs be a context parameter for IAK derivation
-uint32_t debug_state = 0;
-struct mpu_armv8m_dev_t dev_mpu_s = { MPU_BASE };
+/* Fails to compile when (expr) is false (i.e., "assert") */
+#define CASSERT(expr) \
+    typedef char _CONCAT(static_assertion_, __LINE__)[(expr) ? 1 : -1]
 
-uint32_t image_offsets[2];
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
+
+#if (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2)
+#define LOGGING_ENABLED
+#endif /* (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2) */
+
+#if !(defined(LOGGING_ENABLED) && defined(RSE_USE_HOST_UART))
+#include "atu_config.h"
+#endif
+
+/* Needed to store the offset of primary and secondary slot of the BL2 firmware */
+static uint32_t image_offsets[2];
 
 /* Flash device name must be specified by target */
 extern ARM_DRIVER_FLASH FLASH_DEV_NAME;
 
+/* List the MPU regions to be configured */
+enum {
+#if !(defined(LOGGING_ENABLED) && defined(RSE_USE_HOST_UART))
+    ATU_WINDOW_REGION_CFG_NR = 0, /*!< Required for ATU config, not always present */
+#endif
+    ROM_REGION_CFG_NR             /*!< Always configured last as it's required to disable ROM exec */
+};
+
 #ifdef RSE_USE_ROM_LIB_FROM_SRAM
+/* Instruction Patch Table */
+static const struct {
+    uint32_t addr;
+    uint16_t instruction;
+} instr_patches[] = {
+    /* Add patches to a specific instruction in the ROM
+     * here in the form:
+     * { addr (in ROM) of instruction, replacement instruction code}
+     */
+};
+
+/* GOT Patch Table */
+static const struct {
+    uint32_t got_addr;
+    uint32_t replacement;
+} got_patches[] = {
+    /* Add patches to the GOT here in the form:
+     * {Address of GOT (must be within GOT),
+     *        replacement address (points to code in BL1_2)}
+     */
+};
+
 extern uint32_t __got_start__;
 extern uint32_t __got_end__;
 extern uint32_t __bl1_1_text_size;
@@ -77,23 +120,35 @@ uint32_t bl1_image_get_flash_offset(uint32_t image_id)
 }
 #endif
 
-static int32_t init_atu_regions(void)
+#if !(defined(LOGGING_ENABLED) && defined(RSE_USE_HOST_UART))
+static int32_t init_mpu_region_for_atu(void)
 {
-#ifdef RSE_USE_HOST_UART
-    enum atu_error_t atu_err;
+    static struct mpu_armv8m_dev_t dev_mpu_s = { MPU_BASE };
+    int32_t rc;
 
-    /* Initialize UART region */
-    atu_err = atu_initialize_region(&ATU_DEV_S,
-                                get_supported_region_count(&ATU_DEV_S) - 1,
-                                HOST_UART0_BASE_NS, HOST_UART_BASE,
-                                HOST_UART_SIZE);
-    if (atu_err != ATU_ERR_NONE) {
-        return atu_err;
+    /* Set entire RSE ATU window to device memory to prevent caching */
+    const struct mpu_armv8m_region_cfg_t atu_window_region_config = {
+        .region_nr = ATU_WINDOW_REGION_CFG_NR,
+        .region_base = HOST_ACCESS_BASE_NS,
+        .region_limit = HOST_ACCESS_LIMIT_S,
+        .region_attridx = MPU_ARMV8M_MAIR_ATTR_DEVICE_IDX,
+        .attr_exec = MPU_ARMV8M_XN_EXEC_NEVER,
+        .attr_access = MPU_ARMV8M_AP_RW_PRIV_UNPRIV,
+        .attr_sh = MPU_ARMV8M_SH_NONE,
+#ifdef TFM_PXN_ENABLE
+        .attr_pxn = MPU_ARMV8M_PRIV_EXEC_NEVER,
+#endif
+    };
+
+    rc = mpu_armv8m_region_enable(&dev_mpu_s, &atu_window_region_config);
+    if (rc != 0) {
+        return rc;
     }
-#endif /* RSE_USE_HOST_UART */
 
-    return 0;
+    return mpu_armv8m_enable(&dev_mpu_s, PRIVILEGED_DEFAULT_ENABLE, HARDFAULT_NMI_ENABLE);
 }
+
+#endif /* !(defined(LOGGING_ENABLED) && defined(RSE_USE_HOST_UART)) */
 
 #ifdef RSE_SUPPORT_ROM_LIB_RELOCATION
 static void setup_got_register(void)
@@ -114,37 +169,50 @@ static void copy_rom_library_into_sram(void)
     uint32_t got_entry;
     const size_t code_size = (size_t)&__bl1_1_text_size;
 
-    if (code_size > VM1_SIZE) {
+    if (code_size > (VM0_SIZE)) {
         FIH_PANIC;
     }
 
-    /* Copy the ROM into VM1 */
-    memcpy((uint8_t *)VM1_BASE_S, (uint8_t *)ROM_BASE_S, code_size);
+    /* Copy the ROM into VM0 */
+    memcpy((uint8_t *)VM0_BASE_S, (uint8_t *)ROM_BASE_S, code_size);
 
     /* Patch the GOT so that any address which pointed into ROM
-     * now points into VM1.
+     * now points into VM0.
      */
     for (uint32_t *addr = &__got_start__; addr < &__got_end__; addr++) {
         got_entry = *addr;
 
         if (got_entry >= ROM_BASE_S && got_entry < ROM_BASE_S + ROM_SIZE) {
             got_entry -= ROM_BASE_S;
-            got_entry += VM1_BASE_S;
+            got_entry += VM0_BASE_S;
         }
 
         *addr = got_entry;
     }
 }
-#endif /* RSE_USE_ROM_LIB_FROM_SRAM */
 
-static enum tfm_plat_err_t image_load_validate_failure(void)
+static void do_rom_patching(void)
 {
-    if (!tfm_plat_provisioning_is_required()) {
-        return TFM_PLAT_ERR_BL1_2_PROVISIONING_NOT_REQUIRED;
+    int idx;
+
+    /* Patch addresses in GOT with the address of the patched functions */
+    for (idx = 0; idx < ARRAY_SIZE(got_patches); idx++) {
+        *(volatile uint32_t *)(got_patches[idx].got_addr) = got_patches[idx].replacement;
     }
 
-    return tfm_plat_provisioning_perform();
+    /* Instruction based patching --> patch faulty instructions directly instead
+     * of replacing whole function with a patched function
+     */
+    for (idx = 0; idx < ARRAY_SIZE(instr_patches); idx++) {
+        /* The addr in the instr patch table will contain the ROM address
+         * of the faulty patch. Convert that address to the SRAM version as
+         * bl1_1_shared_lib is now shifted to SRAM where it will be patched
+         */
+        *(volatile uint16_t *)(instr_patches[idx].addr - ROM_BASE_S + VM0_BASE_S) =
+            instr_patches[idx].instruction;
+    }
 }
+#endif /* RSE_USE_ROM_LIB_FROM_SRAM */
 
 /* bootloader platform-specific hw initialization */
 int32_t boot_platform_init(void)
@@ -157,6 +225,8 @@ int32_t boot_platform_init(void)
 #endif /* RSE_SUPPORT_ROM_LIB_RELOCATION */
 #ifdef RSE_USE_ROM_LIB_FROM_SRAM
     copy_rom_library_into_sram();
+    /* Patch faulty instruction and functions */
+    do_rom_patching();
 #endif /* RSE_USE_ROM_LIB_FROM_SRAM */
 
     /* Initialize stack limit register */
@@ -177,14 +247,30 @@ int32_t boot_platform_init(void)
         return plat_err;
     }
 
-    result = init_atu_regions();
+#if !(defined(LOGGING_ENABLED) && defined(RSE_USE_HOST_UART))
+    /**
+     * If logging is disabled, or the RSE is not using a UART
+     * from the system memory map, then BL1_1 will not have initialised
+     * the MPU for the ATU window. We therefore need to initialise the
+     * MPU here and configure the whole ATU window to be device
+     * memory to avoid CPU caching
+     */
+    result = init_mpu_region_for_atu();
     if (result != 0) {
         return result;
     }
 
-#if (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2)
+    /* Initialize ATU driver */
+    plat_err = atu_rse_drv_init(&ATU_DEV_S, ATU_DOMAIN_ROOT, atu_regions_static, atu_stat_count);
+    if (plat_err != ATU_ERR_NONE) {
+        return plat_err;
+    }
+
+#endif /* !(defined(LOGGING_ENABLED) && defined(RSE_USE_HOST_UART)) */
+
+#ifdef LOGGING_ENABLED
     stdio_init();
-#endif /* (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2) */
+#endif /* LOGGING_ENABLED */
 
     result = FLASH_DEV_NAME.Initialize(NULL);
     if (result != ARM_DRIVER_OK) {
@@ -192,7 +278,7 @@ int32_t boot_platform_init(void)
     }
 
 #ifdef RSE_USE_HOST_FLASH
-    result = host_flash_atu_init_regions_for_image(UUID_RSE_FIRMWARE_BL2, image_offsets);
+    result = host_flash_atu_setup_image_input_slots(UUID_RSE_FIRMWARE_BL2, image_offsets);
     if (result != 0) {
         int32_t recovery_result = boot_initiate_recovery_mode(0);
         if (recovery_result != TFM_PLAT_ERR_BL1_2_PROVISIONING_NOT_REQUIRED) {
@@ -212,7 +298,21 @@ int32_t boot_platform_post_init(void)
 
     uint32_t vhuk_seed[8 * RSE_AMOUNT];
     size_t vhuk_seed_len;
+    bool provisioning_required;
 
+    /* Perform provisioning if necessary, this function only returns true if we want to perform provisioning
+     * irrespective of whether the flash is attached or not */
+    plat_err = tfm_plat_provisioning_is_required(&provisioning_required);
+    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
+        return plat_err;
+    }
+
+    if (provisioning_required) {
+        plat_err = tfm_plat_provisioning_perform();
+        if (plat_err != TFM_PLAT_ERR_SUCCESS) {
+            return plat_err;
+        }
+    }
 
     rc = b1_2_platform_debug_init();
     if (rc != 0) {
@@ -262,55 +362,66 @@ int32_t boot_platform_post_init(void)
         return plat_err;
     }
 
-#ifdef RSE_LOAD_NS_IMAGE
+#ifdef TFM_LOAD_NS_IMAGE
     plat_err = rse_setup_runtime_non_secure_image_encryption_key();
     if (plat_err) {
         return plat_err;
     }
-#endif /* RSE_LOAD_NS_IMAGE */
+#endif /* TFM_LOAD_NS_IMAGE */
 
     return 0;
 }
 
-
-static int invalidate_hardware_keys(void)
+/* Directly program the MPU registers without calling the driver
+ * as that won't be runnable from ROM once we disable the ROM
+ * execution
+ */
+static void disable_rom_execution(void)
 {
-    enum kmu_error_t kmu_err;
-    uint32_t slot;
-
-    for (slot = 0; slot < KMU_USER_SLOT_MIN; slot++) {
-        kmu_err = kmu_set_slot_invalid(&KMU_DEV_S, slot);
-        if (kmu_err != KMU_ERROR_NONE) {
-            return kmu_err;
-        }
-    }
-
-    return 0;
-}
-
-static int disable_rom_execution(void)
-{
-    int rc;
-    struct mpu_armv8m_region_cfg_t rom_region_config = {
-        0,
-        ROM_BASE_S,
-        ROM_BASE_S + ROM_SIZE - 1,
-        MPU_ARMV8M_MAIR_ATTR_CODE_IDX,
-        MPU_ARMV8M_XN_EXEC_NEVER,
-        MPU_ARMV8M_AP_RO_PRIV_ONLY,
-        MPU_ARMV8M_SH_NONE,
+    const struct mpu_armv8m_region_cfg_t rom_region_cfg = {
+        .region_nr = ROM_REGION_CFG_NR,
+        .region_base = ROM_BASE_S,
+        .region_limit = ROM_BASE_S + ROM_SIZE - 1,
+        .region_attridx = MPU_ARMV8M_MAIR_ATTR_CODE_IDX,
+        .attr_exec = MPU_ARMV8M_XN_EXEC_NEVER,
+        .attr_access = MPU_ARMV8M_AP_RO_PRIV_ONLY,
+        .attr_sh = MPU_ARMV8M_SH_NONE,
 #ifdef TFM_PXN_ENABLE
-        MPU_ARMV8M_PRIV_EXEC_NEVER,
+        .attr_pxn = MPU_ARMV8M_PRIV_EXEC_NEVER,
 #endif
     };
 
-    rc = mpu_armv8m_region_enable(&dev_mpu_s, &rom_region_config);
-    if (rc != 0) {
-        return rc;
-    }
+    /* Validate both base and limit are aligned to 32-byte boundaries,
+     * i.e. base[4:0] = 0b00000 and limit[4:1] = 0b11111
+     */
+    CASSERT((rom_region_cfg.region_base  & ~MPU_RBAR_BASE_Msk)  == 0);
+    CASSERT((rom_region_cfg.region_limit & ~MPU_RLAR_LIMIT_Msk) == 0x1F);
 
-    return mpu_armv8m_enable(&dev_mpu_s, PRIVILEGED_DEFAULT_ENABLE,
-                             HARDFAULT_NMI_ENABLE);
+    /* Region enable */
+    MPU->CTRL = 0x0UL;
+
+    MPU->RNR = rom_region_cfg.region_nr & MPU_RNR_REGION_Msk;
+    MPU->RBAR = (rom_region_cfg.region_base & MPU_RBAR_BASE_Msk) |
+        ((rom_region_cfg.attr_sh << MPU_RBAR_SH_Pos) & MPU_RBAR_SH_Msk) |
+        ((rom_region_cfg.attr_access << MPU_RBAR_AP_Pos) & MPU_RBAR_AP_Msk) |
+        ((rom_region_cfg.attr_exec << MPU_RBAR_XN_Pos) & MPU_RBAR_XN_Msk);
+    MPU->RLAR = (rom_region_cfg.region_limit & MPU_RLAR_LIMIT_Msk) |
+        ((rom_region_cfg.region_attridx << MPU_RLAR_AttrIndx_Pos) & MPU_RLAR_AttrIndx_Msk) |
+#ifdef TFM_PXN_ENABLE
+        ((rom_region_cfg.attr_pxn << MPU_RLAR_PXN_Pos) & MPU_RLAR_PXN_Msk) |
+#endif
+        MPU_RLAR_EN_Msk;
+
+    /* Enable with PRIVILEGED_DEFAULT_ENABLE, HARDFAULT_NMI_ENABLE*/
+
+    MPU->MAIR0 = (MPU_ARMV8M_MAIR_ATTR_DEVICE_VAL << MPU_MAIR0_Attr0_Pos) |
+                 (MPU_ARMV8M_MAIR_ATTR_CODE_VAL << MPU_MAIR0_Attr1_Pos) |
+                 (MPU_ARMV8M_MAIR_ATTR_DATA_VAL << MPU_MAIR0_Attr2_Pos);
+    MPU->MAIR1 = 0x0;
+    MPU->CTRL = MPU_CTRL_PRIVDEFENA_Msk | MPU_CTRL_HFNMIENA_Msk | MPU_CTRL_ENABLE_Msk;
+
+    __DSB();
+    __ISB();
 }
 
 void boot_platform_start_next_image(struct boot_arm_vector_table *vt)
@@ -322,13 +433,6 @@ void boot_platform_start_next_image(struct boot_arm_vector_table *vt)
      */
     static struct boot_arm_vector_table *vt_cpy;
     int32_t result;
-
-#ifdef RSE_USE_HOST_FLASH
-    result = host_flash_atu_uninit_regions();
-    if (result) {
-        while(1){}
-    }
-#endif
 
 #ifdef CRYPTO_HW_ACCELERATOR
     result = cc3xx_lowlevel_uninit();
@@ -344,16 +448,13 @@ void boot_platform_start_next_image(struct boot_arm_vector_table *vt)
         while (1){}
     }
 
-#if (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2)
+#ifdef LOGGING_ENABLED
     stdio_uninit();
-#endif /* (LOG_LEVEL > LOG_LEVEL_NONE) || defined(TEST_BL1_1) || defined(TEST_BL1_2) */
+#endif /* LOGGING_ENABLED */
 
-    kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
+    fih_delay();
 
-    result = disable_rom_execution();
-    if (result != 0) {
-        while (1);
-    }
+    disable_rom_execution();
 
     vt_cpy = vt;
 #if defined(__ARM_ARCH_8M_MAIN__) || defined(__ARM_ARCH_8M_BASE__) \
@@ -375,7 +476,7 @@ void boot_platform_start_next_image(struct boot_arm_vector_table *vt)
 
 int boot_platform_pre_load(uint32_t image_id)
 {
-    kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
+    fih_delay();
 
     return 0;
 }
@@ -384,7 +485,7 @@ int boot_platform_post_load(uint32_t image_id)
 {
     int rc;
 
-    rc = invalidate_hardware_keys();
+    rc = kmu_invalidate_hardware_keys(&KMU_DEV_S);
     if (rc != 0) {
         return rc;
     }
@@ -394,5 +495,7 @@ int boot_platform_post_load(uint32_t image_id)
 
 int boot_initiate_recovery_mode(uint32_t image_id)
 {
-    return image_load_validate_failure();
+    /* Unconditionally perform provisioning. This function
+     * will check if provisioning is actually allowed/required */
+    return tfm_plat_provisioning_perform();
 }

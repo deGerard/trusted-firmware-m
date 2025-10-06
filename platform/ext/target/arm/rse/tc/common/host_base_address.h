@@ -44,15 +44,6 @@
                                                     RSE_ATU_PAGE_SIZE)) -     \
                                           PLAT_RSE_AP_SDS_ATU_MAPPING_BASE)
 
-/* Temporary ATU mapping location. Placed directly after the last address
- * currently used for logical mapping in the RSE */
-#define TEMPORARY_ATU_MAPPING_BASE (HOST_ACCESS_BASE_S + 5 * HOST_IMAGE_MAX_SIZE)
-
-/* There is currently no single location where the ATU regions
- * are defined, so choose an arbitrary region which isn't
- * currently being used elsewhere in RSE */
-#define TEMPORARY_ATU_MAPPING_REGION_ID (10)
-
 #define RSE_ATU_AP_BASE             (0x00000000000000UL)
 #define HOST_STAGING_MEM_BASE       (RSE_ATU_AP_BASE + 0x80000000UL)
 
@@ -67,5 +58,10 @@
 
 /* System control regs are 4KB */
 #define SCP_SYSTEM_CONTROL_REGS_SIZE (ALIGN_UP(0x1000, RSE_ATU_PAGE_SIZE))
+
+/* ATU regions open in BL2 */
+#define HOST_BOOT_IMAGE0_LOAD_BASE_S     (HOST_ACCESS_BASE_S + 0 * HOST_IMAGE_MAX_SIZE) /* Host boot image 0 output secure address */
+#define HOST_BOOT_IMAGE1_LOAD_BASE_S     (HOST_ACCESS_BASE_S + 1 * HOST_IMAGE_MAX_SIZE) /* Host boot image 1 output secure address */
+#define HOST_FLASH_FIP_BASE_S            (HOST_ACCESS_BASE_S + 5 * HOST_IMAGE_MAX_SIZE) /* Host flash FIP input secure address */
 
 #endif  /* __HOST_BASE_ADDRESS_H__ */

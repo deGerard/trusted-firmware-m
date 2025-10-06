@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -10,14 +10,13 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "atu_rse_drv.h"
+#include "atu_rse_lib.h"
+#include "test_atu_config.h"
 
 #include "unity.h"
 
-/* Dummy logical and physical addresses */
-#define ATU_DUMMY_SLOT_LOG_ADDR 0x70000000
-#define ATU_DUMMY_SLOT_PHY_ADDR 0x80000000
-#define ATU_DUMMY_SLOT_SIZE 0x4000
+#define ATU_GET_ATUPS(atu_base) (                                     \
+    (uint8_t)(((atu_base)->atubc & ATU_ATUBC_PS_MASK) >> ATU_ATUBC_PS_OFF))
 
 /*
  * RSE ATU build configuration values (atubc):
@@ -42,7 +41,7 @@
 #define ATU_CIDR3_RESET_VALUE 0xB1u /* Component ID 3 register */
 
 /* ATU register map structure */
-static struct _atu_reg_map_t {
+static struct _atu_reg_map_test_t {
     uint32_t atubc;
     /*!< Offset: 0x000 (R/O) ATU Build Configuration Register */
     uint32_t atuc;
@@ -162,7 +161,7 @@ void setUp(void) { set_default_register_values(); }
 
 void tearDown(void) { verify_read_only_registers(); }
 
-void test_get_page_size_ok(void)
+void test_atu_rse_get_page_size_ok(void)
 {
     uint16_t page_size;
     uint16_t expected_page_size;
@@ -171,13 +170,13 @@ void test_get_page_size_ok(void)
     expected_page_size = 0x1u << ((ATU_BC_RESET_VALUE >> 4) & 0xFu);
 
     /* Act */
-    page_size = get_page_size(&ATU_DEV_S);
+    page_size = atu_rse_get_page_size(&ATU_DEV_S);
 
     /* Assert */
     TEST_ASSERT_EQUAL_UINT16(expected_page_size, page_size);
 }
 
-void test_get_supported_region_count_ok(void)
+void test_atu_rse_get_supported_region_count_ok(void)
 {
     uint8_t supported_region;
     uint8_t expected_supported_region;
@@ -186,648 +185,356 @@ void test_get_supported_region_count_ok(void)
     expected_supported_region = 0x20;
 
     /* Act */
-    supported_region = get_supported_region_count(&ATU_DEV_S);
+    supported_region = atu_rse_get_supported_region_count(&ATU_DEV_S);
 
     /* Assert */
     TEST_ASSERT_EQUAL_UINT8(expected_supported_region, supported_region);
 }
 
-void test_enable_atu_region_invalid_region(void)
+void test_atu_map_addr_ok(void)
 {
     enum atu_error_t atu_err;
-    uint32_t expected_atuc;
-    uint8_t region;
-
-    /* Prepare */
-    region = 0xFF;
-    expected_atuc = ATU_C_RESET_VALUE;
-
-    /* Act */
-    atu_err = enable_atu_region(&ATU_DEV_S, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.atuc, expected_atuc);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_INVALID_REGION);
-}
-
-void test_enable_atu_region_ok(void)
-{
-    enum atu_error_t atu_err;
-    uint32_t expected_atuc;
-    uint8_t region;
-
-    /* Prepare */
-    region = 0x1;
-    expected_atuc = ATU_C_RESET_VALUE | (1u << region);
-
-    /* Act */
-    atu_err = enable_atu_region(&ATU_DEV_S, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.atuc, expected_atuc);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_disable_atu_region_invalid_region(void)
-{
-    enum atu_error_t atu_err;
-    uint32_t expected_atuc;
-    uint8_t region;
-
-    /* Prepare */
-    region = 0xFF;
-    expected_atuc = ATU_C_RESET_VALUE;
-
-    /* Act */
-    atu_err = disable_atu_region(&ATU_DEV_S, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.atuc, expected_atuc);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_INVALID_REGION);
-}
-
-void test_disable_atu_region_ok(void)
-{
-    enum atu_error_t atu_err;
-    uint32_t expected_atuc;
-    uint8_t region;
-
-    /* Prepare */
-    region = 0x1;
-    regmap.atuc = ATU_C_RESET_VALUE | (1u << region);
-    expected_atuc = ATU_C_RESET_VALUE;
-
-    /* Act */
-    atu_err = disable_atu_region(&ATU_DEV_S, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.atuc, expected_atuc);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_me_interrupt_is_waiting_int_available(void)
-{
-    bool int_available;
-
-    /* Act */
-    int_available = me_interrupt_is_waiting(&ATU_DEV_S);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL(int_available, false);
-}
-
-void test_me_interrupt_is_watiting_no_int(void)
-{
-    bool int_available;
-
-    /* Prepare */
-    regmap.atuis = 0x0u;
-
-    /* Act */
-    int_available = me_interrupt_is_waiting(&ATU_DEV_S);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL(int_available, false);
-}
-
-void test_enable_me_interrupt_ok(void)
-{
-    /* Act */
-    enable_me_interrupt(&ATU_DEV_S);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.atuie, 0x1u);
-}
-
-void test_clear_me_interrupt_ok(void)
-{
-    /* Act */
-    clear_me_interrupt(&ATU_DEV_S);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.atuic, 0x1u);
-}
-
-void test_get_mismatch_address(void)
-{
-    uint32_t mismatch_address;
-
-    /* Act */
-    mismatch_address = get_mismatch_address(&ATU_DEV_S);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.atuma, mismatch_address);
-}
-
-void test_set_start_logical_address_invalid_region(void)
-{
-    enum atu_error_t atu_err;
-    uint32_t expected_atursla;
-    uint8_t region;
-
-    /* Prepare */
-    expected_atursla = 0x0;
-    region = 0xFF;
-
-    /* Act */
-    atu_err =
-        set_start_logical_address(&ATU_DEV_S, ATU_DUMMY_SLOT_LOG_ADDR, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.atursla[region], expected_atursla);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_INVALID_REGION);
-}
-
-void test_set_start_logical_address_ok(void)
-{
-    enum atu_error_t atu_err;
-    uint32_t expected_atursla;
-    uint16_t page_size;
-    uint8_t region;
-
-    /* Prepare */
-    page_size = ((ATU_BC_RESET_VALUE >> 4) & 0xFu);
-    expected_atursla = (ATU_DUMMY_SLOT_LOG_ADDR >> page_size);
-    region = 0x1;
-
-    /* Act */
-    atu_err =
-        set_start_logical_address(&ATU_DEV_S, ATU_DUMMY_SLOT_LOG_ADDR, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.atursla[region], expected_atursla);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_set_end_logical_address_invalid_region(void)
-{
-    enum atu_error_t atu_err;
-    uint32_t expected_atursla;
-    uint32_t region_size;
-    uint8_t region;
-
-    /* Prepare */
-    region_size = 0x200;
-    expected_atursla = 0x0;
-    region = 0xFF;
-
-    /* Act */
-    atu_err = set_end_logical_address(
-        &ATU_DEV_S, ATU_DUMMY_SLOT_LOG_ADDR + region_size, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturela[region], expected_atursla);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_INVALID_REGION);
-}
-
-void test_set_end_logical_address_invalid_end_address(void)
-{
-    enum atu_error_t atu_err;
-    uint32_t expected_aturela;
-    uint32_t region_size;
-    uint16_t page_size;
-    uint8_t region;
-
-    /* Prepare */
-    region_size = ATU_DUMMY_SLOT_SIZE;
-    page_size = ((ATU_BC_RESET_VALUE >> 4) & 0xFu);
-    expected_aturela = 0x0;
-    region = 0x1;
-
-    regmap.atursla[region] = (ATU_DUMMY_SLOT_LOG_ADDR >> page_size);
-
-    /* Act */
-    atu_err = set_end_logical_address(
-        &ATU_DEV_S, ATU_DUMMY_SLOT_LOG_ADDR - region_size, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturela[region], expected_aturela);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_INVALID_LOGICAL_ADDRESS);
-}
-
-void test_set_end_logical_address_ok(void)
-{
-    enum atu_error_t atu_err;
-    uint32_t expected_aturela;
-    uint32_t region_size;
-    uint16_t page_size;
-    uint8_t region;
-
-    /* Prepare */
-    region_size = ATU_DUMMY_SLOT_SIZE;
-    page_size = ((ATU_BC_RESET_VALUE >> 4) & 0xFu);
-    expected_aturela = (ATU_DUMMY_SLOT_LOG_ADDR + region_size) >> page_size;
-    region = 0x1;
-
-    regmap.atursla[region] = (ATU_DUMMY_SLOT_LOG_ADDR >> page_size);
-
-    /* Act */
-    atu_err = set_end_logical_address(
-        &ATU_DEV_S, ATU_DUMMY_SLOT_LOG_ADDR + region_size, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturela[region], expected_aturela);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_set_add_value_invalid_region(void)
-{
-    enum atu_error_t atu_err;
-    uint64_t offset_address;
-    uint32_t expected_aturav_l;
-    uint32_t expected_aturav_m;
-    uint16_t page_size;
-    uint8_t region;
-
-    /* Prepare */
-    page_size = ((ATU_BC_RESET_VALUE >> 4) & 0xFu);
-    offset_address =
-        (ATU_DUMMY_SLOT_PHY_ADDR - ATU_DUMMY_SLOT_LOG_ADDR) >> page_size;
-    expected_aturav_l = 0x0;
-    expected_aturav_m = 0x0;
-    region = 0xFF;
-
-    /* Act */
-    atu_err = set_add_value(&ATU_DEV_S, offset_address, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturav_l[region], expected_aturav_l);
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturav_m[region], expected_aturav_m);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_INVALID_REGION);
-}
-
-void test_set_add_value_invalid_region_ok(void)
-{
-    enum atu_error_t atu_err;
-    uint64_t offset_address;
-    uint32_t expected_aturav_l;
-    uint32_t expected_aturav_m;
-    uint16_t page_size;
-    uint8_t region;
-
-    /* Prepare */
-    page_size = ((ATU_BC_RESET_VALUE >> 4) & 0xFu);
-    offset_address =
-        (ATU_DUMMY_SLOT_PHY_ADDR - ATU_DUMMY_SLOT_LOG_ADDR) >> page_size;
-    expected_aturav_l = (uint32_t)offset_address;
-    expected_aturav_m = (uint32_t)(offset_address >> 32);
-    region = 0x1;
-
-    /* Act */
-    atu_err = set_add_value(&ATU_DEV_S, offset_address, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturav_l[region], expected_aturav_l);
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturav_m[region], expected_aturav_m);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_set_axnsc_invalid_region(void)
-{
-    enum atu_error_t atu_err;
-    enum atu_roba_t atu_roba;
-    uint32_t expected_aturoba;
-    uint8_t region;
-
-    /* Prepare */
-    expected_aturoba = 0x0;
-    atu_roba = ATU_ROBA_SET_0;
-    region = 0xFF;
-
-    /* Act */
-    atu_err = set_axnsc(&ATU_DEV_S, atu_roba, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturoba[region], expected_aturoba);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_INVALID_REGION);
-}
-
-void test_set_axnsc_ok(void)
-{
-    enum atu_error_t atu_err;
-    enum atu_roba_t atu_roba;
-    uint32_t expected_aturoba;
-    uint8_t axnsc_offs;
-    uint8_t region;
-
-    /* Prepare */
-    atu_roba = ATU_ROBA_SET_0;
-    axnsc_offs = 14u;
-    expected_aturoba = (atu_roba << axnsc_offs);
-    region = 0x1;
-
-    /* Act */
-    atu_err = set_axnsc(&ATU_DEV_S, atu_roba, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturoba[region], expected_aturoba);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_set_axcache3_ok(void)
-{
-    enum atu_error_t atu_err;
-    enum atu_roba_t atu_roba;
-    uint32_t expected_aturoba;
-    uint8_t axcache3_offs;
-    uint8_t region;
-
-    /* Prepare */
-    atu_roba = ATU_ROBA_SET_0;
-    axcache3_offs = 12u;
-    expected_aturoba = (atu_roba << axcache3_offs);
-    region = 0x1;
-
-    /* Act */
-    atu_err = set_axcache3(&ATU_DEV_S, atu_roba, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturoba[region], expected_aturoba);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_set_axcache2_ok(void)
-{
-    enum atu_error_t atu_err;
-    enum atu_roba_t atu_roba;
-    uint32_t expected_aturoba;
-    uint8_t axcache2_offs;
-    uint8_t region;
-
-    /* Prepare */
-    atu_roba = ATU_ROBA_SET_0;
-    axcache2_offs = 10u;
-    expected_aturoba = (atu_roba << axcache2_offs);
-    region = 0x1;
-
-    /* Act */
-    atu_err = set_axcache2(&ATU_DEV_S, atu_roba, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturoba[region], expected_aturoba);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_set_axcache1_ok(void)
-{
-    enum atu_error_t atu_err;
-    enum atu_roba_t atu_roba;
-    uint32_t expected_aturoba;
-    uint8_t axcache1_offs;
-    uint8_t region;
-
-    /* Prepare */
-    atu_roba = ATU_ROBA_SET_0;
-    axcache1_offs = 8u;
-    expected_aturoba = (atu_roba << axcache1_offs);
-    region = 0x1;
-
-    /* Act */
-    atu_err = set_axcache1(&ATU_DEV_S, atu_roba, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturoba[region], expected_aturoba);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_set_axcache0_ok(void)
-{
-    enum atu_error_t atu_err;
-    enum atu_roba_t atu_roba;
-    uint32_t expected_aturoba;
-    uint8_t axcache0_offs;
-    uint8_t region;
-
-    /* Prepare */
-    atu_roba = ATU_ROBA_SET_0;
-    axcache0_offs = 6u;
-    expected_aturoba = (atu_roba << axcache0_offs);
-    region = 0x1;
-
-    /* Act */
-    atu_err = set_axcache0(&ATU_DEV_S, atu_roba, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturoba[region], expected_aturoba);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_set_axprot2_ok(void)
-{
-    enum atu_error_t atu_err;
-    enum atu_roba_t atu_roba;
-    uint32_t expected_aturoba;
-    uint8_t axprot2_offs;
-    uint8_t region;
-
-    /* Prepare */
-    atu_roba = ATU_ROBA_SET_0;
-    axprot2_offs = 4u;
-    expected_aturoba = (atu_roba << axprot2_offs);
-    region = 0x1;
-
-    /* Act */
-    atu_err = set_axprot2(&ATU_DEV_S, atu_roba, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturoba[region], expected_aturoba);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_set_axprot1_ok(void)
-{
-    enum atu_error_t atu_err;
-    enum atu_roba_t atu_roba;
-    uint32_t expected_aturoba;
-    uint8_t axprot1_offs;
-    uint8_t region;
-
-    /* Prepare */
-    atu_roba = ATU_ROBA_SET_0;
-    axprot1_offs = 2u;
-    expected_aturoba = (atu_roba << axprot1_offs);
-    region = 0x1;
-
-    /* Act */
-    atu_err = set_axprot1(&ATU_DEV_S, atu_roba, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturoba[region], expected_aturoba);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_set_axprot0_ok(void)
-{
-    enum atu_error_t atu_err;
-    enum atu_roba_t atu_roba;
-    uint32_t expected_aturoba;
-    uint8_t axprot0_offs;
-    uint8_t region;
-
-    /* Prepare */
-    atu_roba = ATU_ROBA_SET_0;
-    axprot0_offs = 0u;
-    expected_aturoba = (atu_roba << axprot0_offs);
-    region = 0x1;
-
-    /* Act */
-    atu_err = set_axprot0(&ATU_DEV_S, atu_roba, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT32(regmap.aturoba[region], expected_aturoba);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_set_gp_value_invalid_region(void)
-{
-    enum atu_error_t atu_err;
-    uint8_t expected_val;
-    uint8_t region;
-    uint8_t val;
-
-    /* Prepare */
-    region = 0xFF;
-    val = 0xAA;
-    expected_val = 0x0;
-
-    /* Act */
-    atu_err = set_gp_value(&ATU_DEV_S, val, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT8(regmap.aturgp[region], expected_val);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_INVALID_REGION);
-}
-
-void test_set_gp_value_ok(void)
-{
-    enum atu_error_t atu_err;
-    uint8_t expected_val;
-    uint8_t region;
-    uint8_t val;
-
-    /* Prepare */
-    region = 0x1;
-    val = 0xAA;
-    expected_val = 0xAA;
-
-    /* Act */
-    atu_err = set_gp_value(&ATU_DEV_S, val, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT8(regmap.aturgp[region], expected_val);
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
-}
-
-void test_get_gp_value_ok(void)
-{
-    uint8_t region;
-    uint8_t val;
-
-    /* Prepare */
-    region = 0x1;
-    regmap.aturgp[region] = 0xAA;
-
-    /* Act */
-    val = get_gp_value(&ATU_DEV_S, region);
-
-    /* Assert */
-    TEST_ASSERT_EQUAL_UINT8(regmap.aturgp[region], val);
-}
-
-void test_atu_initialize_region_invalid_atu_dev(void)
-{
-    enum atu_error_t atu_err;
+    uint32_t log_addr;
     uint32_t size;
-    uint8_t region;
-
-    /* Prepare */
-    size = ATU_DUMMY_SLOT_SIZE;
-    region = 0x1;
 
     /* Act */
-    atu_err = atu_initialize_region(NULL, region, ATU_DUMMY_SLOT_LOG_ADDR,
-                                    ATU_DUMMY_SLOT_PHY_ADDR, size);
+    atu_err = atu_rse_drv_init(&ATU_DEV_S, ATU_DOMAIN_ROOT, atu_regions_static, atu_stat_count);
 
     /* Assert */
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_INIT_REGION_INVALID_ARG);
+    TEST_ASSERT_EQUAL(ATU_ERR_NONE, atu_err);
+
+    /* Act */
+    atu_err = atu_rse_map_addr_automatically(&ATU_DEV_S, ATU_DUMMY_SLOT_PHY_ADDR,
+                                             ATU_DUMMY_SLOT_SIZE, 0, &log_addr, &size);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL(ATU_ERR_NONE, atu_err);
+
+    /* Act */
+    atu_err = atu_rse_free_addr(&ATU_DEV_S, log_addr);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL(ATU_ERR_NONE, atu_err);
 }
 
-void test_atu_initialize_region_invalid_size(void)
+void test_atu_rse_drv_init_ok(void)
 {
     enum atu_error_t atu_err;
+
+    /* Act */
+    atu_err = atu_rse_drv_init(&ATU_DEV_S, ATU_DOMAIN_ROOT, atu_regions_static, atu_stat_count);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL(ATU_ERR_NONE, atu_err);
+}
+
+void test_atu_static_cfg_init_ok(void)
+{
+    enum atu_error_t atu_err;
+
+    /* Act */
+    atu_err = atu_rse_drv_init(&ATU_DEV_S,ATU_DOMAIN_ROOT,atu_regions_static,atu_stat_count);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL(ATU_ERR_NONE, atu_err);
+}
+
+void test_atu_static_cfg_init_addr_overlap_fail(void)
+{
+    enum atu_error_t atu_err;
+
+    /* Prepare */
+    const struct atu_region_map_t atu_regions_static_overlap[] =
+    {
+        /* Dummy slot 0*/
+        {
+            .phys_addr = ATU_DUMMY_SLOT_PHY_ADDR,
+            .log_addr = ATU_DUMMY_SLOT_LOG_ADDR,
+            .size = ATU_DUMMY_SLOT_SIZE,
+            .out_bus_attr = ATU_ENCODE_ATTRIBUTES_NON_SECURE_PAS,
+        },
+        /* Dummy slot 1*/
+        {
+            .phys_addr = ATU_DUMMY_SLOT_PHY_ADDR + 1 * ATU_DUMMY_OFFSET,
+            .log_addr = ATU_DUMMY_SLOT_LOG_ADDR - ATU_DUMMY_SLOT_SIZE,
+            .size = 3 * ATU_DUMMY_SLOT_SIZE,
+            .out_bus_attr = ATU_ENCODE_ATTRIBUTES_NON_SECURE_PAS,
+        },
+    };
+
+    /* Act */
+    atu_err = atu_rse_drv_init(&ATU_DEV_S,ATU_DOMAIN_ROOT,atu_regions_static_overlap,2);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL_UINT16(ATU_ERR_STAT_CFG_OVRLP, atu_err);
+}
+
+void test_atu_map_addr_size_higher_than_range_fail(void)
+{
+    enum atu_error_t atu_err;
+    uint32_t log_addr;
     uint32_t size;
-    uint8_t region;
+    uint32_t bit_mask;
 
     /* Prepare */
-    size = 0xDEAD;
-    region = 0x1;
+    bit_mask = ((0x1 << ATU_DYN_SLOT_COUNT) -1 ) << ATU_DYN_SLOT_START;
 
     /* Act */
-    atu_err = atu_initialize_region(&ATU_DEV_S, region, ATU_DUMMY_SLOT_LOG_ADDR,
-                                    ATU_DUMMY_SLOT_PHY_ADDR, size);
+    atu_err = atu_rse_drv_init(&ATU_DEV_S, ATU_DOMAIN_ROOT, atu_regions_static, atu_stat_count);
 
     /* Assert */
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_INIT_REGION_INVALID_ADDRESS);
+    TEST_ASSERT_EQUAL(ATU_ERR_NONE, atu_err);
+
+    /* Act */
+    atu_err = atu_rse_map_addr_automatically(&ATU_DEV_S, ATU_DUMMY_SLOT_PHY_ADDR,
+                                             ATU_DYN_NON_SEC_LOG_ADDR_SIZE, 0,
+                                             &log_addr, &size);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL(ATU_ERR_MEM_SIZE_NOT_AVAILABLE, atu_err);
+    TEST_ASSERT_EQUAL_UINT32(ATU_C_RESET_VALUE, regmap.atuc & bit_mask);
 }
 
-void test_atu_initialize_region_ok(void)
+void test_atu_map_addr_size_lower_than_page_size_ok(void)
 {
     enum atu_error_t atu_err;
-    uint8_t region;
+    uint32_t log_addr;
+    uint32_t size;
+    uint64_t expected_size;
+    uint8_t ps;
 
     /* Prepare */
-    region = 0x1;
+    ps = ATU_GET_ATUPS(&regmap);
+    expected_size = 1;
 
     /* Act */
-    atu_err =
-        atu_initialize_region(&ATU_DEV_S, region, ATU_DUMMY_SLOT_LOG_ADDR,
-                              ATU_DUMMY_SLOT_PHY_ADDR, ATU_DUMMY_SLOT_SIZE);
+    atu_err = atu_rse_drv_init(&ATU_DEV_S, ATU_DOMAIN_ROOT, atu_regions_static, atu_stat_count);
 
     /* Assert */
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
+    TEST_ASSERT_EQUAL(ATU_ERR_NONE, atu_err);
+
+    /* Act */
+    atu_err = atu_rse_map_addr_automatically(&ATU_DEV_S, ATU_DUMMY_SLOT_PHY_ADDR, 1 << (ps-1),
+                                             0, &log_addr, &size);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL(ATU_ERR_NONE, atu_err);
+    TEST_ASSERT_EQUAL_UINT32(expected_size, regmap.aturela[ATU_DYN_SLOT_START] - regmap.atursla[ATU_DYN_SLOT_START] + 1U);
 }
 
-void test_atu_uninitialize_region_invalid_atu_dev(void)
+void test_atu_map_addr_size_zero_fail(void)
 {
     enum atu_error_t atu_err;
-    uint8_t region;
+    uint32_t log_addr;
+    uint32_t size;
+    uint32_t bit_mask;
 
     /* Prepare */
-    region = 0x1;
+    bit_mask = ((0x1 << ATU_DYN_SLOT_COUNT) -1 ) << ATU_DYN_SLOT_START;
 
     /* Act */
-    atu_err = atu_uninitialize_region(NULL, region);
+    atu_err = atu_rse_drv_init(&ATU_DEV_S, ATU_DOMAIN_ROOT, atu_regions_static, atu_stat_count);
 
     /* Assert */
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_UNINIT_REGION_INVALID_ARG);
+    TEST_ASSERT_EQUAL(ATU_ERR_NONE, atu_err);
+
+    /* Act */
+    atu_err = atu_rse_map_addr_automatically(&ATU_DEV_S, ATU_DUMMY_SLOT_PHY_ADDR, 0, 0,
+                                             &log_addr, &size);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL(ATU_ERR_MEM_INVALID_ARG, atu_err);
+    TEST_ASSERT_EQUAL_UINT32(ATU_C_RESET_VALUE, regmap.atuc & bit_mask);
 }
 
-void test_atu_uninitialize_region_disable_atu_region_fails(void)
+void test_static_size_zero_fail(void)
 {
     enum atu_error_t atu_err;
-    uint8_t region;
 
     /* Prepare */
-    region = 0xff;
+    const struct atu_region_map_t atu_regions_static_size_zero[] =
+    {
+            /* Dummy slot 0*/
+            {
+                .phys_addr = ATU_DUMMY_SLOT_PHY_ADDR,
+                .log_addr = ATU_DUMMY_SLOT_LOG_ADDR,
+                .size = 0,
+                .out_bus_attr = ATU_ENCODE_ATTRIBUTES_SECURE_PAS,
+            },
+            /* Dummy slot 1*/
+            {
+                .phys_addr = ATU_DUMMY_SLOT_PHY_ADDR + 1 * ATU_DUMMY_OFFSET,
+                .log_addr = ATU_DUMMY_SLOT_LOG_ADDR + 1 * ATU_DUMMY_OFFSET,
+                .size = 0,
+                .out_bus_attr = ATU_ENCODE_ATTRIBUTES_SECURE_PAS,
+            },
+    };
 
     /* Act */
-    atu_err = atu_uninitialize_region(&ATU_DEV_S, region);
+    atu_err = atu_rse_drv_init(&ATU_DEV_S,ATU_DOMAIN_ROOT,atu_regions_static_size_zero,1);
 
     /* Assert */
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_INVALID_REGION);
+    TEST_ASSERT_EQUAL_UINT16(ATU_ERR_MEM_INVALID_ARG, atu_err);
+
+    /* Act */
+    atu_err = atu_rse_drv_init(&ATU_DEV_S,ATU_DOMAIN_ROOT,atu_regions_static_size_zero,2);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL_UINT16(ATU_ERR_MEM_INVALID_ARG, atu_err);
 }
 
-void test_atu_uninitialize_region_ok(void)
+void test_static_unsorted_log_addr_ok(void)
 {
     enum atu_error_t atu_err;
-    uint8_t region;
 
     /* Prepare */
-    region = 0x1;
+    const struct atu_region_map_t atu_regions_static_unsorted_log_addr[] =
+    {
+            /* Dummy slot 0*/
+            {
+                .phys_addr = ATU_DUMMY_SLOT_PHY_ADDR + 2 * ATU_DUMMY_OFFSET,
+                .log_addr = ATU_DUMMY_SLOT_LOG_ADDR + 2 * ATU_DUMMY_OFFSET,
+                .size = ATU_DUMMY_OFFSET,
+                .out_bus_attr = ATU_ENCODE_ATTRIBUTES_SECURE_PAS,
+            },
+            /* Dummy slot 1*/
+            {
+                .phys_addr = ATU_DUMMY_SLOT_PHY_ADDR + 1 * ATU_DUMMY_OFFSET,
+                .log_addr = ATU_DUMMY_SLOT_LOG_ADDR + 1 * ATU_DUMMY_OFFSET,
+                .size = ATU_DUMMY_OFFSET,
+                .out_bus_attr = ATU_ENCODE_ATTRIBUTES_SECURE_PAS,
+            },
+            /* Dummy slot 2*/
+            {
+                .phys_addr = ATU_DUMMY_SLOT_PHY_ADDR,
+                .log_addr = ATU_DUMMY_SLOT_LOG_ADDR,
+                .size = ATU_DUMMY_OFFSET,
+                .out_bus_attr = ATU_ENCODE_ATTRIBUTES_SECURE_PAS,
+            },
+    };
 
     /* Act */
-    atu_err = atu_uninitialize_region(&ATU_DEV_S, region);
+    atu_err = atu_rse_drv_init(&ATU_DEV_S,ATU_DOMAIN_ROOT,atu_regions_static_unsorted_log_addr,3);
 
     /* Assert */
-    TEST_ASSERT_EQUAL(atu_err, ATU_ERR_NONE);
+    TEST_ASSERT_EQUAL_UINT16(ATU_ERR_NONE, atu_err);
+}
+
+void test_static_phys_addr_alignment_fail(void)
+{
+    enum atu_error_t atu_err;
+
+    /* Prepare */
+    const struct atu_region_map_t atu_regions_static_unaligned_phys_addr[] =
+    {
+            /* Dummy slot 0*/
+            {
+                .phys_addr = ATU_DUMMY_SLOT_PHY_ADDR + 0x1,
+                .log_addr = ATU_DUMMY_SLOT_LOG_ADDR,
+                .size = 3 * ATU_DUMMY_SLOT_SIZE,
+                .out_bus_attr = ATU_ENCODE_ATTRIBUTES_SECURE_PAS,
+            },
+    };
+
+    /* Act */
+    atu_err = atu_rse_drv_init(&ATU_DEV_S,ATU_DOMAIN_ROOT,atu_regions_static_unaligned_phys_addr,1);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL_UINT16(ATU_ERR_INIT_REGION_INVALID_ADDRESS, atu_err);
+}
+
+void test_static_log_addr_alignment_fail(void)
+{
+    enum atu_error_t atu_err;
+
+    /* Prepare */
+    const struct atu_region_map_t atu_regions_static_unaligned_log_addr[] =
+    {
+            /* Dummy slot 0*/
+            {
+                .phys_addr = ATU_DUMMY_SLOT_PHY_ADDR,
+                .log_addr = ATU_DUMMY_SLOT_LOG_ADDR + 0x1,
+                .size = 3 * ATU_DUMMY_SLOT_SIZE,
+                .out_bus_attr = ATU_ENCODE_ATTRIBUTES_SECURE_PAS,
+            },
+    };
+
+    /* Act */
+    atu_err = atu_rse_drv_init(&ATU_DEV_S,ATU_DOMAIN_ROOT,atu_regions_static_unaligned_log_addr,1);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL_UINT16(ATU_ERR_INIT_REGION_INVALID_ADDRESS, atu_err);
+}
+
+void test_static_size_alignment_fail(void)
+{
+    enum atu_error_t atu_err;
+
+    /* Prepare */
+    const struct atu_region_map_t atu_regions_static_unaligned_size[] =
+    {
+            /* Dummy slot 0*/
+            {
+                .phys_addr = ATU_DUMMY_SLOT_PHY_ADDR,
+                .log_addr = ATU_DUMMY_SLOT_LOG_ADDR,
+                .size = 3 * ATU_DUMMY_SLOT_SIZE + 0x1,
+                .out_bus_attr = ATU_ENCODE_ATTRIBUTES_SECURE_PAS,
+            },
+    };
+
+    /* Act */
+    atu_err = atu_rse_drv_init(&ATU_DEV_S,ATU_DOMAIN_ROOT,atu_regions_static_unaligned_size,1);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL_UINT16(ATU_ERR_INIT_REGION_INVALID_ADDRESS, atu_err);
+}
+
+void test_dyn_phys_addr_alignment_fail(void)
+{
+    enum atu_error_t atu_err;
+    uint32_t log_addr;
+    uint32_t size;
+    uint32_t bit_mask;
+
+    /* Prepare */
+    bit_mask = ((0x1 << ATU_DYN_SLOT_COUNT) -1 ) << ATU_DYN_SLOT_START;
+
+    /* Act */
+    atu_err = atu_rse_drv_init(&ATU_DEV_S, ATU_DOMAIN_ROOT, atu_regions_static, atu_stat_count);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL(ATU_ERR_NONE, atu_err);
+
+    /* Act */
+    atu_err = atu_rse_map_addr_automatically(&ATU_DEV_S, ATU_DUMMY_SLOT_PHY_ADDR + 0x1,
+                                             ATU_DUMMY_SLOT_SIZE, 0, &log_addr, &size);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL_UINT32(ATU_C_RESET_VALUE, regmap.atuc & bit_mask);
+    TEST_ASSERT_EQUAL_UINT16(ATU_ERR_INIT_REGION_INVALID_ADDRESS, atu_err);
+}
+
+void test_dyn_size_alignment_ok(void)
+{
+    enum atu_error_t atu_err;
+    uint32_t log_addr;
+    uint32_t size;
+    uint64_t expected_size;
+    uint8_t ps;
+
+    /* Prepare */
+    ps = ATU_GET_ATUPS(&regmap);
+
+    /* Act */
+    atu_err = atu_rse_drv_init(&ATU_DEV_S, ATU_DOMAIN_ROOT, atu_regions_static, atu_stat_count);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL(ATU_ERR_NONE, atu_err);
+
+    /* Act */
+    atu_err = atu_rse_map_addr_automatically(&ATU_DEV_S, ATU_DUMMY_SLOT_PHY_ADDR,
+                                             ATU_DUMMY_SLOT_SIZE + 0x1, 0, &log_addr, &size);
+
+    /* Assert */
+    TEST_ASSERT_EQUAL(ATU_ERR_NONE, atu_err);
 }

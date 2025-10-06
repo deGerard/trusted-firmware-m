@@ -27,6 +27,75 @@
 #include "mbedtls/build_info.h"
 
 #if defined(PSA_WANT_ALG_CBC_PKCS7)
+
+#if defined(CC3XX_CONFIG_CBC_PKCS7_DECRYPT_ARBITRARY_LENGTHS)
+
+static void write_ring_buffer(ring_buffer_t *acc, uint8_t byte)
+{
+    acc->buffer[acc->write_offset++] = byte;
+    acc->write_offset = (acc->write_offset == sizeof(acc->buffer)) ? 0 : acc->write_offset;
+    acc->count++;
+}
+
+static uint8_t read_ring_buffer(ring_buffer_t *acc)
+{
+    const uint8_t byte = acc->buffer[acc->read_offset++];
+    acc->read_offset = (acc->read_offset == sizeof(acc->buffer)) ? 0 : acc->read_offset;
+    acc->count--;
+    return byte;
+}
+
+/* We always require to output a maximum of 2 output blocks. Note that this value
+ * must be chosen accordingly to the size of the ring buffer used for buffering
+ */
+#define MAX_BLOCKS_STREAMABLE (2)
+
+/**
+ * @brief Streaming function that accumulates inputs in a ring buffer and emits them in chunks
+ *        of size AES_BLOCK_SIZE, for a maximum of MAX_BLOCKS_STREAMABLE per call
+ *
+ * @param[in, out] acc            Ring buffer to accumulate the input
+ * @param[in]      input          Input buffer to accumulate
+ * @param[in]      input_len      Size in bytes of the \p input buffer
+ * @param[out]     output_blocks  Output buffer containing blocks of AES_BLOCK_SIZE
+ * @param[out]     consumed_input Number of bytes that have been consumed into the ring
+ *
+ * @return size_t Returns the number of blocks that have been produced into \p output_blocks
+ */
+static size_t streaming_accumulate(
+    ring_buffer_t *acc,
+    const uint8_t *input,
+    size_t input_len,
+    uint8_t *output_blocks,
+    size_t *consumed_input)
+{
+    size_t written_blocks = 0;
+    size_t i = 0;
+
+    while (i < input_len) {
+        /* Consume input as much as possible */
+        while ((i < input_len) && (acc->count < sizeof(acc->buffer))) {
+            write_ring_buffer(acc, input[i++]);
+        }
+
+        /* Extract full blocks if available */
+        while ((acc->count >= AES_BLOCK_SIZE) && (written_blocks < MAX_BLOCKS_STREAMABLE)) {
+            for (size_t j = 0; j < AES_BLOCK_SIZE; j++) {
+                output_blocks[(written_blocks * AES_BLOCK_SIZE) + j] = read_ring_buffer(acc);
+            }
+            written_blocks++;
+        }
+
+        /* We have either extracted all that we can or we filled the buffer, so leave */
+        if ((acc->count == sizeof(acc->buffer)) && (written_blocks == MAX_BLOCKS_STREAMABLE))
+            break;
+    }
+
+    *consumed_input = i;
+    return written_blocks;
+}
+#endif /* CC3XX_CONFIG_CBC_PKCS7_DECRYPT_ARBITRARY_LENGTHS */
+
 /**
  * @brief A function which removes the padding bytes from the
  *        input buffer, returning the actual size of the payload
@@ -194,6 +263,9 @@ out_chacha20:
         switch (alg) {
 #if defined(PSA_WANT_ALG_CBC_NO_PADDING)
         case PSA_ALG_CBC_NO_PADDING:
+            if ((input_length % AES_BLOCK_SIZE) > 0) {
+                return PSA_ERROR_INVALID_ARGUMENT;
+            }
             mode = CC3XX_AES_MODE_CBC;
             break;
 #endif
@@ -355,7 +427,7 @@ psa_status_t cc3xx_cipher_update(
 
     CC3XX_ASSERT(operation != NULL);
     CC3XX_ASSERT(input != NULL);
-    CC3XX_ASSERT(output != NULL);
+    CC3XX_ASSERT(!output_size ^ (output != NULL));
     CC3XX_ASSERT(output_length != NULL);
 
     /* Initialize */
@@ -431,17 +503,19 @@ out_chacha20:
     case PSA_KEY_TYPE_AES:
     {
         cc3xx_lowlevel_aes_set_output_buffer(output, output_size);
-#if defined(PSA_WANT_ALG_CBC_PKCS7)
 
+#if defined(PSA_WANT_ALG_CBC_PKCS7)
         /* In padded mode and decryption, we always cache the last block */
         if (operation->alg == PSA_ALG_CBC_PKCS7 &&
             operation->aes.direction == CC3XX_AES_DIRECTION_DECRYPT) {
 
+#if !defined(CC3XX_CONFIG_CBC_PKCS7_DECRYPT_ARBITRARY_LENGTHS)
             /* The driver supports only block aligned updates to reduce complexity in CBC_PKCS7 */
             if (input_length % AES_BLOCK_SIZE) {
                 status = PSA_ERROR_INVALID_ARGUMENT;
                 goto out_aes;
             }
+#endif /* CC3XX_CONFIG_CBC_PKCS7_DECRYPT_ARBITRARY_LENGTHS */
 
             if (operation->pkcs7_last_block_size == AES_BLOCK_SIZE) {
                 err = cc3xx_lowlevel_aes_update(operation->pkcs7_last_block, operation->pkcs7_last_block_size);
@@ -452,21 +526,64 @@ out_chacha20:
                 operation->pkcs7_last_block_size = 0;
             }
 
+#if !defined(CC3XX_CONFIG_CBC_PKCS7_DECRYPT_ARBITRARY_LENGTHS)
             if (input_length) {
-            /* Update the cache */
+                /* Update the cache */
                 memcpy(&operation->pkcs7_last_block, &input[input_length - AES_BLOCK_SIZE], AES_BLOCK_SIZE);
                 operation->pkcs7_last_block_size = AES_BLOCK_SIZE;
 
                 /* Reduce by the amount we have cached */
                 input_length -= AES_BLOCK_SIZE;
-            }
-        } /* PSA_ALG_CBC_PKCS7 && CC3XX_AES_DIRECTION_DECRYPT */
-#endif /* PSA_WANT_ALG_CBC_PKCS7 */
 
-        err = cc3xx_lowlevel_aes_update(input, input_length);
-        if (err != CC3XX_ERR_SUCCESS) {
-            status = cc3xx_to_psa_err(err);
-            goto out_aes;
+                err = cc3xx_lowlevel_aes_update(input, input_length);
+                if (err != CC3XX_ERR_SUCCESS) {
+                    status = cc3xx_to_psa_err(err);
+                    goto out_aes;
+                }
+            }
+#else
+            while (input_length) {
+                size_t consumed_input = 0;
+                /* We require at most 2 blocks to be extracted from the ring
+                 * buffer in order to be able to keep at least one last block
+                 * available for a call to psa_cipher_finish(). 2 blocks per call
+                 * is then the number of blocks that minimises requirements on buffer
+                 * sizes
+                 */
+                uint32_t temp[(MAX_BLOCKS_STREAMABLE * AES_BLOCK_SIZE) / sizeof(uint32_t)];
+                size_t written_blocks = streaming_accumulate(
+                    &operation->pkcs7_ring_buf,
+                    input, input_length,
+                    (uint8_t *)temp,
+                    &consumed_input);
+
+                input += consumed_input;
+                input_length -= consumed_input;
+
+                if (written_blocks == MAX_BLOCKS_STREAMABLE) {
+                    err = cc3xx_lowlevel_aes_update((const uint8_t *)temp, AES_BLOCK_SIZE);
+                    if (err != CC3XX_ERR_SUCCESS) {
+                        status = cc3xx_to_psa_err(err);
+                        goto out_aes;
+                    }
+                    memcpy(&operation->pkcs7_last_block, &temp[AES_BLOCK_SIZE / sizeof(uint32_t)], AES_BLOCK_SIZE);
+                    operation->pkcs7_last_block_size = AES_BLOCK_SIZE;
+                } else if (written_blocks == (MAX_BLOCKS_STREAMABLE - 1)) {
+                    memcpy(&operation->pkcs7_last_block, &temp[0], AES_BLOCK_SIZE);
+                    operation->pkcs7_last_block_size = AES_BLOCK_SIZE;
+                } else {
+                    operation->pkcs7_last_block_size = 0;
+                }
+            }
+#endif /* CC3XX_CONFIG_CBC_PKCS7_DECRYPT_ARBITRARY_LENGTHS */
+        } else
+#endif /* PSA_WANT_ALG_CBC_PKCS7 */
+        {
+            err = cc3xx_lowlevel_aes_update(input, input_length);
+            if (err != CC3XX_ERR_SUCCESS) {
+                status = cc3xx_to_psa_err(err);
+                goto out_aes;
+            }
         }
 
         current_output_size = cc3xx_lowlevel_aes_get_current_output_size();
@@ -502,11 +619,14 @@ psa_status_t cc3xx_cipher_finish(
     size_t bytes_produced_on_finish;
 
     CC3XX_ASSERT(operation != NULL);
-    CC3XX_ASSERT(!output_size ^ (output != NULL));
     CC3XX_ASSERT(output_length != NULL);
 
     /* Initialize */
     *output_length = 0;
+
+    if (output_size == 0 || output == NULL) {
+        return PSA_SUCCESS;
+    }
 
     if (operation->cipher_is_initialized == false) {
         /* This means it was never updated with any data, so just exit now */
@@ -544,9 +664,21 @@ out_chacha20:
 #if defined(PSA_WANT_KEY_TYPE_AES)
     case PSA_KEY_TYPE_AES:
 
+#if defined(PSA_WANT_ALG_CBC_NO_PADDING)
+        if ((operation->alg == PSA_ALG_CBC_NO_PADDING) &&
+            ((operation->aes.crypted_length % AES_BLOCK_SIZE) > 0)) {
+            return PSA_ERROR_INVALID_ARGUMENT;
+        }
+#endif /*PSA_WANT_ALG_CBC_NO_PADDING */
+
         cc3xx_lowlevel_aes_set_state(&(operation->aes));
 
         cc3xx_lowlevel_aes_set_output_buffer(output, output_size);
+
+        if (output_size < operation->aes.dma_state.block_buf_size_in_use) {
+            status = PSA_ERROR_BUFFER_TOO_SMALL;
+            goto out_aes;
+        }
 
 #if defined(PSA_WANT_ALG_CBC_PKCS7)
         /* When encrypting on finish, we need to encrypt the padding */

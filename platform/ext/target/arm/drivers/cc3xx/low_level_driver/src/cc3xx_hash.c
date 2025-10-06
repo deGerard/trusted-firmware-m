@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024, The TrustedFirmware-M Contributors. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -11,11 +11,11 @@
 #include "cc3xx_error.h"
 #include "cc3xx_dma.h"
 #include "cc3xx_engine_state.h"
-#include "cc3xx_endian_helpers.h"
 #include "cc3xx_stdlib.h"
 
 #include "fatal_error.h"
 
+#include "endian.h"
 #include <assert.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -160,7 +160,7 @@ void cc3xx_lowlevel_hash_uninit(void)
 
 cc3xx_err_t cc3xx_lowlevel_hash_update(const uint8_t *buf, size_t length)
 {
-    return cc3xx_lowlevel_dma_buffered_input_data(buf, length, false);
+    return cc3xx_lowlevel_dma_buffered_input_data(buf, length, false, false);
 }
 
 void cc3xx_lowlevel_hash_get_state(struct cc3xx_hash_state_t *state)

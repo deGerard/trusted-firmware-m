@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@
 #define SAMRRLS_MASK(event_id) (0xFUL << SAMRRLS_OFF(event_id))
 
 /* Mask for NEC in SAMBC */
-#define SAMBC_NUMBER_EVENT_COUNTERS_MASK (0x03)
+#define SAMBC_NUMBER_EVENT_COUNTERS_MASK (0x07)
 
 /* Position for NEC in SAMBC */
 #define SAMBC_NUMBER_EVENT_COUNTERS_POS 8
@@ -79,7 +79,30 @@ static inline struct sam_reg_map_t *get_sam_dev_base(
 
 enum sam_error_t sam_init(const struct sam_dev_t *dev)
 {
-    /* Nothing to do, the configuration is written by the OTP DMA ICS */
+    struct sam_reg_map_t *regs = get_sam_dev_base(dev);
+    uint32_t zero_count = 0;
+
+    const uint32_t samnec =
+        ((regs->sambc >> SAMBC_NUMBER_EVENT_COUNTERS_POS) & SAMBC_NUMBER_EVENT_COUNTERS_MASK);
+
+    /*
+     * The SAM registers are not initialised by the DMA ICS in all states
+     * and therefore we need to correctly set up the value of the SAMICV
+     * here. Failure to do so will result in SAM alarms for ICV failures
+     * when we come to program the SAM registers
+     */
+    /* Calculate ZC over integrity checker protected area */
+    for (volatile uint32_t *ptr = (volatile uint32_t *)&regs->samem;
+         ptr < (volatile uint32_t *)&regs->samicv; ptr++) {
+        /* Skip unavailable event counters */
+        if ((ptr > (volatile uint32_t *)&regs->samec[samnec]) &&
+            (ptr <= (volatile uint32_t *)&regs->samec[7])) {
+            continue;
+        }
+        zero_count += count_zero_bits(*ptr);
+    }
+
+    regs->samicv = zero_count;
 
     return SAM_ERROR_NONE;
 }
@@ -120,6 +143,20 @@ enum sam_error_t sam_disable_event(const struct sam_dev_t *dev,
     return SAM_ERROR_NONE;
 }
 
+static void update_samicv(struct sam_reg_map_t *regs, uint32_t new_reg_val, uint32_t old_reg_val)
+{
+    uint32_t zc_new, zc_old;
+
+    zc_new = count_zero_bits(new_reg_val);
+    zc_old = count_zero_bits(old_reg_val);
+
+    if (zc_new > zc_old) {
+        regs->samicv += zc_new - zc_old;
+    } else {
+        regs->samicv -= zc_old - zc_new;
+    }
+}
+
 enum sam_error_t sam_set_event_response(const struct sam_dev_t *dev,
                                         enum sam_event_id_t event_id,
                                         enum sam_response_t response)
@@ -145,7 +182,7 @@ enum sam_error_t sam_set_event_response(const struct sam_dev_t *dev,
     regs->samrrls[SAMRRLS_IDX(event_id)] = new_reg_val;
 
     /* Update integrity check value with the difference in zero count */
-    regs->samicv += count_zero_bits(new_reg_val) - count_zero_bits(old_reg_val);
+    update_samicv(regs,  new_reg_val,  old_reg_val);
 
     return SAM_ERROR_NONE;
 }
@@ -155,7 +192,7 @@ void sam_set_watchdog_counter_initial_value(const struct sam_dev_t *dev,
                                             enum sam_response_t responses)
 {
     struct sam_reg_map_t *regs = get_sam_dev_base(dev);
-    uint32_t prev_zero_count = count_zero_bits(regs->samwdciv);
+    uint32_t old_reg_val = regs->samwdciv;
 
     uint32_t wdciv_val = (count_value & SAMWDCIV_INIT_VALUE_WDT_MASK) |
                          ((((uint32_t)responses >> 2UL) & 0x3FUL) << 26UL);
@@ -163,7 +200,7 @@ void sam_set_watchdog_counter_initial_value(const struct sam_dev_t *dev,
     regs->samwdciv = wdciv_val;
 
     /* Update integrity check value with the difference in zero count */
-    regs->samicv += count_zero_bits(wdciv_val) - prev_zero_count;
+    update_samicv(regs, wdciv_val, old_reg_val);
 }
 
 enum sam_error_t sam_register_event_handler(struct sam_dev_t *dev,

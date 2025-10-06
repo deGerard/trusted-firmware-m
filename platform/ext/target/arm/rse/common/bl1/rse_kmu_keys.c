@@ -9,12 +9,12 @@
 
 #include <stdint.h>
 #include <string.h>
-
+#include "bl1_random.h"
 #include "device_definition.h"
 #include "dpa_hardened_word_copy.h"
 #include "cc3xx_drv.h"
-#include "trng.h"
 #include "fatal_error.h"
+#include "crypto.h"
 
 static const struct kmu_key_export_config_t aes_key0_export_config = {
     .export_address = CC3XX_BASE_S + 0x400, /* CC3XX AES_KEY_0 register */
@@ -169,6 +169,8 @@ enum tfm_plat_err_t setup_key_from_derivation(enum kmu_hardware_keyslot_t input_
     size_t kmu_slot_size;
     uint8_t *context_ptr =  NULL;
     size_t context_ptr_len = 0;
+    psa_key_id_t psa_key_id;
+    psa_status_t status;
 
     if (context != NULL && mask != RSE_BOOT_STATE_INCLUDE_NONE) {
         return TFM_PLAT_ERR_KEY_DERIVATION_INVALID_BOOT_STATE_WITH_CONTEXT;
@@ -195,12 +197,36 @@ enum tfm_plat_err_t setup_key_from_derivation(enum kmu_hardware_keyslot_t input_
         return TFM_PLAT_ERR_KEY_DERIVATION_DERIVATION_SLOT_TOO_SMALL;
     }
 
-    plat_err = cc3xx_lowlevel_kdf_cmac((cc3xx_aes_key_id_t)input_key_id,
-                                 key_buf, CC3XX_AES_KEYSIZE_256, label,
-                                 label_len, context_ptr, context_ptr_len,
-                                 (uint32_t *)p_kmu_slot_buf, 32);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
+    if (key_buf != 0) {
+        psa_key_attributes_t key_attr = PSA_KEY_ATTRIBUTES_INIT;
+
+        psa_set_key_type(&key_attr, PSA_KEY_TYPE_AES);
+        psa_set_key_bits(&key_attr, key_size * 8);
+        psa_set_key_usage_flags(&key_attr, PSA_KEY_USAGE_DERIVE);
+        psa_set_key_lifetime(&key_attr, PSA_KEY_LIFETIME_VOLATILE);
+        status = psa_import_key(&key_attr, (uint8_t*)key_buf, key_size, &psa_key_id);
+        if (status != PSA_SUCCESS) {
+            return (enum tfm_plat_err_t)status;
+        }
+    } else {
+        psa_key_id = cc3xx_get_opaque_key(input_key_id);
+        if (CC3XX_IS_OPAQUE_KEY_INVALID(psa_key_id)) {
+            return (enum tfm_plat_err_t)PSA_ERROR_INVALID_ARGUMENT;
+        }
+    }
+
+    status = bl1_psa_derive_key(psa_key_id, label, label_len,
+                                context_ptr, context_ptr_len,
+                                (uint8_t*)p_kmu_slot_buf, key_size);
+    if (status != PSA_SUCCESS) {
+        return (enum tfm_plat_err_t)status;
+    }
+
+    if (key_buf != 0) {
+        status = psa_destroy_key(psa_key_id);
+        if (status != PSA_SUCCESS) {
+            return (enum tfm_plat_err_t)status;
+        }
     }
 
     /* Due to limitations in CryptoCell, any key that needs to be used for
@@ -279,7 +305,7 @@ enum tfm_plat_err_t setup_key_from_rng(enum rse_kmu_slot_id_t slot,
         return TFM_PLAT_ERR_KEY_DERIVATION_RNG_SLOT_TOO_SMALL;
     }
 
-    bl1_trng_generate_random((uint8_t *)p_kmu_slot_buf, key_size);
+    bl1_random_generate_secure((uint8_t *)p_kmu_slot_buf, key_size);
 
     /* Due to limitations in CryptoCell, any key that needs to be used for
      * AES-CCM needs to be duplicated into a second slot.
@@ -379,17 +405,23 @@ enum tfm_plat_err_t rse_derive_vhuk_seed(uint32_t *vhuk_seed, size_t vhuk_seed_b
                          size_t *vhuk_seed_size)
 {
     const uint8_t vhuk_seed_label[]  = "VHUK_SEED_DERIVATION";
+    psa_status_t status;
+    psa_key_id_t psa_key_id;
     enum tfm_plat_err_t plat_err;
 
     if (vhuk_seed_buf_len < 32) {
         return 1;
     }
 
-    plat_err = cc3xx_lowlevel_kdf_cmac((cc3xx_aes_key_id_t)KMU_HW_SLOT_HUK,
-                                 NULL, CC3XX_AES_KEYSIZE_256, vhuk_seed_label,
-                                 sizeof(vhuk_seed_label), NULL, 0, vhuk_seed, 32);
-    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
-        return plat_err;
+    psa_key_id = cc3xx_get_opaque_key(KMU_HW_SLOT_HUK);
+    if (CC3XX_IS_OPAQUE_KEY_INVALID(psa_key_id)) {
+        return (enum tfm_plat_err_t)PSA_ERROR_INVALID_ARGUMENT;
+    }
+
+    status = bl1_psa_derive_key(psa_key_id, vhuk_seed_label, sizeof(vhuk_seed_label),
+                                NULL, 0, (uint8_t*)vhuk_seed, 32);
+    if (status != PSA_SUCCESS) {
+        return (enum tfm_plat_err_t)status;
     }
 
     *vhuk_seed_size = 32;
@@ -409,20 +441,17 @@ enum tfm_plat_err_t rse_setup_vhuk(const uint8_t *vhuk_seeds, size_t vhuk_seeds_
                                      boot_state_config);
 }
 
-enum tfm_plat_err_t rse_setup_session_key(const uint8_t *ivs, size_t ivs_len)
+enum tfm_plat_err_t rse_setup_session_key(const uint8_t *seed, size_t seed_len)
 {
     enum tfm_plat_err_t plat_err;
     enum kmu_error_t kmu_err;
-    const boot_state_include_mask boot_state_config =
-        RSE_BOOT_STATE_INCLUDE_LCS | RSE_BOOT_STATE_INCLUDE_TP_MODE |
-        RSE_BOOT_STATE_INCLUDE_BL1_2_HASH | RSE_BOOT_STATE_INCLUDE_REPROVISIONING_BITS;
+    const boot_state_include_mask boot_state_config = RSE_BOOT_STATE_INCLUDE_NONE;
+    const uint8_t session_key_label[] = "RSE_COMMS_SESSION_KEY_DERIVATION";
 
-
-    plat_err = setup_key_from_derivation(KMU_HW_SLOT_GUK, NULL, ivs, ivs_len, NULL, 0,
-                                   RSE_KMU_SLOT_SESSION_KEY_0,
-                                     &aes_key0_export_config,
-                                     &aes_key1_export_config, true,
-                                   boot_state_config);
+    plat_err = setup_key_from_derivation(KMU_HW_SLOT_GUK, NULL, session_key_label,
+                                         sizeof(session_key_label), seed, seed_len,
+                                         RSE_KMU_SLOT_SESSION_KEY_0, &aes_key0_export_config,
+                                         &aes_key1_export_config, true, boot_state_config);
     if (plat_err != TFM_PLAT_ERR_SUCCESS) {
         return plat_err;
     }
@@ -547,18 +576,33 @@ enum tfm_plat_err_t rse_setup_provisioning_key(const uint8_t *label, size_t labe
 
 enum tfm_plat_err_t rse_setup_runtime_secure_image_encryption_key(void)
 {
-#ifdef RSE_XIP
     enum tfm_plat_err_t plat_err;
     enum kmu_error_t kmu_err;
     const uint8_t label[] = "RUNTIME_SECURE_ENCRYPTION_KEY";
     const boot_state_include_mask boot_state_config =
-        RSE_BOOT_STATE_INCLUDE_TP_MODE | RSE_BOOT_STATE_INCLUDE_BL1_2_HASH |
+        RSE_BOOT_STATE_INCLUDE_TP_MODE |
         RSE_BOOT_STATE_INCLUDE_REPROVISIONING_BITS;
+
+#ifdef RSE_XIP
+    plat_err = setup_key_from_derivation(KMU_HW_SLOT_KCE_CM, NULL,
+                                            label, sizeof(label), NULL, 0,
+                                            RSE_KMU_SLOT_SECURE_SIC_ENCRYPTION_KEY,
+                                            &sic_dr0_export_config, NULL, false,
+                                            boot_state_config);
+    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
+        return plat_err;
+    }
+    kmu_err = kmu_set_key_locked(&KMU_DEV_S, RSE_KMU_SLOT_SECURE_SIC_ENCRYPTION_KEY);
+    if (kmu_err != KMU_ERROR_NONE) {
+        return (enum tfm_plat_err_t) kmu_err;
+    }
+
+#endif
 
     plat_err = setup_key_from_derivation(KMU_HW_SLOT_KCE_CM, NULL,
                                          label, sizeof(label), NULL, 0,
                                          RSE_KMU_SLOT_SECURE_ENCRYPTION_KEY,
-                                         &sic_dr0_export_config, NULL, false,
+                                         &aes_key0_export_config, NULL, false,
                                          boot_state_config);
     if (plat_err != TFM_PLAT_ERR_SUCCESS) {
         return plat_err;
@@ -568,26 +612,23 @@ enum tfm_plat_err_t rse_setup_runtime_secure_image_encryption_key(void)
     if (kmu_err != KMU_ERROR_NONE) {
         return (enum tfm_plat_err_t) kmu_err;
     }
-#endif /* RSE_XIP */
 
-    /* TODO FIXME Allow Mcuboot to decrypt using on-device keys */
     return TFM_PLAT_ERR_SUCCESS;
 }
 
 enum tfm_plat_err_t rse_setup_runtime_non_secure_image_encryption_key(void)
 {
-#ifdef RSE_XIP
     enum tfm_plat_err_t plat_err;
     enum kmu_error_t kmu_err;
     const uint8_t label[] = "RUNTIME_NON_SECURE_ENCRYPTION_KEY";
     const boot_state_include_mask boot_state_config =
-        RSE_BOOT_STATE_INCLUDE_TP_MODE | RSE_BOOT_STATE_INCLUDE_BL1_2_HASH |
+        RSE_BOOT_STATE_INCLUDE_TP_MODE |
         RSE_BOOT_STATE_INCLUDE_REPROVISIONING_BITS;
 
     plat_err = setup_key_from_derivation(KMU_HW_SLOT_KCE_DM, NULL,
                                          label, sizeof(label), NULL, 0,
                                          RSE_KMU_SLOT_NON_SECURE_ENCRYPTION_KEY,
-                                         &sic_dr1_export_config, NULL, false,
+                                         &aes_key0_export_config, NULL, false,
                                          boot_state_config);
     if (plat_err != TFM_PLAT_ERR_SUCCESS) {
         return plat_err;
@@ -597,9 +638,24 @@ enum tfm_plat_err_t rse_setup_runtime_non_secure_image_encryption_key(void)
     if (kmu_err != KMU_ERROR_NONE) {
         return (enum tfm_plat_err_t) kmu_err;
     }
-#endif /* RSE_XIP */
 
-    /* TODO FIXME Allow Mcuboot to decrypt using on-device keys */
+#ifdef RSE_XIP
+    plat_err = setup_key_from_derivation(KMU_HW_SLOT_KCE_DM, NULL,
+                                         label, sizeof(label), NULL, 0,
+                                         RSE_KMU_SLOT_NON_SECURE_SIC_ENCRYPTION_KEY,
+                                         &sic_dr1_export_config, NULL, false,
+                                         boot_state_config);
+    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
+        return plat_err;
+    }
+
+    kmu_err = kmu_set_key_locked(&KMU_DEV_S, RSE_KMU_SLOT_NON_SECURE_SIC_ENCRYPTION_KEY);
+    if (kmu_err != KMU_ERROR_NONE) {
+        return (enum tfm_plat_err_t) kmu_err;
+    }
+
+#endif
+
     return TFM_PLAT_ERR_SUCCESS;
 }
 
@@ -618,6 +674,12 @@ enum tfm_plat_err_t rse_setup_cc3xx_pka_sram_encryption_key(void)
     kmu_err = kmu_set_key_locked(&KMU_DEV_S, RSE_KMU_SLOT_CC3XX_PKA_SRAM_ENCRYPTION_KEY);
     if (kmu_err != KMU_ERROR_NONE) {
         return (enum tfm_plat_err_t)kmu_err;
+    }
+
+    /* Load the PKA encryption key, now that it is set up */
+    kmu_err = kmu_export_key(&KMU_DEV_S, RSE_KMU_SLOT_CC3XX_PKA_SRAM_ENCRYPTION_KEY);
+    if (kmu_err != KMU_ERROR_NONE) {
+        return kmu_err;
     }
 
     return TFM_PLAT_ERR_SUCCESS;

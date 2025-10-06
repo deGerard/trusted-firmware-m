@@ -190,6 +190,7 @@ enum kmu_error_t {
     KMU_ERROR_NONE = 0x0u,
     KMU_ERROR_INVALID_SLOT = KMU_ERROR_BASE,
     KMU_ERROR_INIT_INVALID_ALIGNMENT,
+    KMU_ERROR_NULL_POINTER,
     KMU_ERROR_SLOT_LOCKED,
     KMU_ERROR_SLOT_INTERNAL_ERROR,
     KMU_ERROR_SLOT_INVALIDATED,
@@ -203,6 +204,7 @@ enum kmu_error_t {
     KMU_ERROR_EXPORT_KEY_INVALID_ADDR,
     KMU_ERROR_EXPORT_KEY_INTERNAL_ERROR,
     KMU_ERROR_INVALID_DELAY_LENGTH,
+    KMU_ERROR_OPERATION_SKIPPED,
     KMU_ERROR_FORCE_UINT_SIZE = UINT_MAX,
 };
 
@@ -299,6 +301,8 @@ enum kmu_error_t kmu_export_key(struct kmu_dev_t *dev, uint32_t slot);
 
 enum kmu_error_t kmu_random_delay(struct kmu_dev_t *dev,
                                   enum kmu_delay_limit_t limit);
+
+enum kmu_error_t kmu_invalidate_hardware_keys(struct kmu_dev_t *dev);
 
 #ifdef __cplusplus
 }

@@ -8,9 +8,11 @@
 
 import re
 import ast
+import sys
 import os
 import operator as op
-from c_include import get_includes, get_defines
+import string
+from tfm_tools.c_include import get_includes, get_defines
 
 def _int(x):
     if isinstance(x, str):
@@ -53,6 +55,9 @@ def _replace_from_dict(s, d):
 def _eval_maths(expr):
     return _int(__eval_maths(expr))
 
+def ternary(cond, if_true, if_false):
+    return if_true if cond else if_false
+
 def __eval_maths(expr):
     def _bool_to_int(b):
         if isinstance(b, bool):
@@ -67,6 +72,7 @@ def __eval_maths(expr):
         return _eval_maths(s + str(_eval_maths(b)) + e)
 
     ops = {
+        ternary:   r"(.*)\?(.*):(.*)",
         op.or_:    r"(.*)\|\|(.*)",
         op.and_:   r"(.*)&&(.*)",
         op.ne:     r"(.*)!=(.*)",
@@ -91,12 +97,19 @@ def __eval_maths(expr):
         return _bool_to_int(f(*[_int(__eval_maths(x)) for x in r.groups()]))
     return _int(expr)
 
+def _remove_comments(text):
+    # Remove comments from the line
+    text = re.sub(r"/\*.*?\*/", "", text)
+    text = text.split("//")[0].strip()
+    return text
+
 def _get_next_line(text):
     lines = text.split("\n")
     is_multiline_comment = False
     for I in range(len(lines)):
         yield_line = lines[I]
-        yield_line = re.sub(r"/\*.*?\*/", "", yield_line)
+
+        yield_line = _remove_comments(yield_line)
 
         if is_multiline_comment:
             if "*/" not in yield_line:
@@ -107,12 +120,56 @@ def _get_next_line(text):
         else:
             if "/*" in yield_line and "*/" not in yield_line:
                 is_multiline_comment = True
-                yield_line = yield_line[:yield_line.find("/*")]
+
+                # Multi-line macros comments will be handled after
+                if(yield_line[-1] != "\\"):
+                    yield_line = yield_line[:yield_line.find("/*")]
 
         while (len(yield_line) > 0 and yield_line[-1] == "\\"):
             I += 1
             yield_line = yield_line[:-1] + lines[I]
+
+        yield_line = _remove_comments(yield_line)
+
         yield yield_line
+
+def split_expr(expr: str):
+    # First split on whitespace
+    parts = expr.split()
+    tokens = []
+    for part in parts:
+        # For each chunk, split again on math symbols
+        for op in "()*/+-":
+            part = part.replace(op, f" {op} ")
+        tokens.extend(part.split())
+    return tokens
+
+def _replace_whole_word(text, target, replacement):
+    custom_punct = string.punctuation.replace("_", "")
+    words = split_expr(text)
+    new_words = [
+        word.replace(target, replacement) if word.strip(custom_punct) == target else word
+        for word in words
+    ]
+    return ' '.join(new_words)
+
+def contains_identifier(text: str, identifier: str) -> bool:
+        pattern = rf'(?<![A-Za-z0-9_]){re.escape(identifier)}(?![A-Za-z0-9_])'
+        return re.search(pattern, text) is not None
+
+class Conditional_block_state():
+    """Represents the state of a conditional block (#if/elif/else)"""
+    def __init__(self, condition):
+        self._in_true_branch = condition
+        self._had_true_branch = condition
+
+    def update_else(self, condition):
+        """Update the state when processing an #elif or #else"""
+        self._in_true_branch = not self._had_true_branch and condition
+        self._had_true_branch = self._had_true_branch or self._in_true_branch
+
+    def is_in_true_branch(self):
+        return self._in_true_branch
 
 class C_macro():
     def __init__(self):
@@ -146,9 +203,9 @@ class C_macro():
                 continue
 
             if isinstance(v, str):
-                text = text.replace(d, v)
+                text = _replace_whole_word(text, d, v)
             else:
-                if d in text:
+                if contains_identifier(text, d):
                     s, me = text.split(d, 1)
                     _, m, e = _split_outer_brackets(me)
                     m = str(v(*[x.rstrip().lstrip() for x in m.split(",")]))
@@ -199,13 +256,13 @@ class C_macro():
         self._sync___dict__()
 
     def _parse_ifdef(self, x):
-        self._ifdefs.append([x, x in self._definitions.keys()])
+        self._ifdefs.append([x, Conditional_block_state(x in self._definitions.keys())])
 
     def _parse_ifndef(self, x):
-        self._ifdefs.append([x, x not in self._definitions.keys()])
+        self._ifdefs.append([x, Conditional_block_state(x not in self._definitions.keys())])
 
     def _parse_else(self, x):
-        self._ifdefs[-1][1] = not self._ifdefs[-1][1]
+        self._ifdefs[-1][1].update_else(True)
 
     def _parse_endif(self, x):
         self._ifdefs = self._ifdefs[:-1]
@@ -231,15 +288,15 @@ class C_macro():
 
     def _parse_if(self, x):
         condition, value = self._eval_if(x)
-        self._ifdefs.append([condition, value])
+        self._ifdefs.append([condition, Conditional_block_state(value)])
 
     def _parse_elif(self, x):
         condition, value = self._eval_if(x)
-        self._ifdefs[-1][1] = value
+        self._ifdefs[-1][1].update_else(value)
 
     def _parse_error(self, x):
         print(x)
-        exit(1)
+        sys.exit(1)
 
     def parse_line(self, x):
         conditional_tokens = {
@@ -263,7 +320,7 @@ class C_macro():
         x = x.strip()
         for t,f in tokens.items():
             if t in x:
-                if t not in conditional_tokens.keys() and [i for i in self._ifdefs if not i[1]]:
+                if t not in conditional_tokens.keys() and [i for i in self._ifdefs if not i[1].is_in_true_branch()]:
                     return
 
                 f(x.replace(t, "").strip())
@@ -274,10 +331,10 @@ class C_macro():
 
     def _search_paths(self, h_file):
         for i in self._include_paths:
+            file_path = os.path.join(i, h_file)
             try:
-                dir_files = [f for f in os.listdir(i) if os.path.isfile(os.path.join(i, f))]
-                if h_file in dir_files:
-                    return os.path.join(i, h_file)
+                if os.path.isfile(file_path):
+                    return file_path
             except FileNotFoundError:
                 continue
         return h_file
@@ -294,7 +351,7 @@ class C_macro():
             self.parse_text(f.read())
         pass
 
-if __name__ == '__main__':
+def main():
     import argparse
 
     parser = argparse.ArgumentParser(allow_abbrev=False)
@@ -308,3 +365,6 @@ if __name__ == '__main__':
     defines = get_defines(args.compile_commands_file, args.c_file_to_mirror_includes_from)
     s = C_macro.from_h_file(args.h_file, includes, defines)
     print(s._definitions)
+
+if __name__ == '__main__':
+    sys.exit(main())

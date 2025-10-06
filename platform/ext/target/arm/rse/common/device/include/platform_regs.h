@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2024 Arm Limited
+ * Copyright (c) 2019-2025 Arm Limited
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -425,10 +425,24 @@ struct rse_sysctrl_t {
     volatile uint32_t cidr3;             /* 0xFFC (R/ ) Component ID 3 */
 };
 
-/* Bit to mark boot failure (SWSYN) in swreset reg */
-#define SWSYN_FAILED_BOOT_BIT_POS      24
-/* Bit to notify boot to enter debug state (SWSYN) in swreset reg */
-#define SWSYN_DEBUG_STATE_IN_BOOT_BIT_POS 25
+/* SWRESETREQ in SWRESET register. Must be set together with SWSYN */
+#define SYSCTRL_SWRESET_SWRESETREQ_POS  (5)
+#define SYSCTRL_SWRESET_SWRESETREQ_MASK (1UL << SYSCTRL_SWRESET_SWRESETREQ_POS)
+
+/* SWSYN field in SWRESET register, SWRESET[31:24] */
+#define SYSCTRL_SWRESET_SWSYN_POS         24
+#define SYSCTRL_SWRESET_SWSYN_MASK        (0xFFUL << SYSCTRL_SWRESET_SWSYN_POS)
+
+/* Bit assignments in SWSYN */
+enum {
+    RSE_SWSYN_FAILED_BOOT_BIT_POS         = SYSCTRL_SWRESET_SWSYN_POS,
+    RSE_SWSYN_DEBUG_STATE_IN_BOOT_BIT_POS,
+};
+
+/* SWSYN mask for when entering debug */
+#define RSE_SWSYN_ENTER_DEBUG_MASK        (0x1UL << RSE_SWSYN_DEBUG_STATE_IN_BOOT_BIT_POS)
+#define RSE_SWSYN_FAILED_BOOT_MASK        (0x1UL << RSE_SWSYN_FAILED_BOOT_BIT_POS)
+
 #define CLK_CFG1_SYSCLKCFG_POS         0
 #define CLK_CFG1_SYSCLKCFG_MASK        (0xFUL << CLK_CFG1_SYSCLKCFG_POS)
 #define CLK_CFG1_AONCLKCFG_POS         4

@@ -74,6 +74,7 @@ target_compile_definitions(platform_region_defs
         PROVISIONING_CODE_PADDED_SIZE=${PROVISIONING_CODE_PADDED_SIZE}
         PROVISIONING_VALUES_PADDED_SIZE=${PROVISIONING_VALUES_PADDED_SIZE}
         PROVISIONING_DATA_PADDED_SIZE=${PROVISIONING_DATA_PADDED_SIZE}
+        $<$<BOOL:${TFM_LOAD_NS_IMAGE}>:TFM_LOAD_NS_IMAGE>
 )
 
 if(NOT PLATFORM_DEFAULT_PROVISIONING)
@@ -154,6 +155,8 @@ target_include_directories(platform_s
         partition
         device/config
         ${PLATFORM_DIR}/..
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:${PLATFORM_DIR}/ext/driver/tpm_client>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:${PLATFORM_DIR}/ext/driver/spi>
     INTERFACE
         ${PLATFORM_DIR}/../interface/include
 )
@@ -172,13 +175,15 @@ target_link_libraries(platform_s
         hardware_regs
         hardware_flash
         hardware_uart
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:hardware_spi>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:hardware_gpio>
         cmsis_core
         tfm_sprt
 )
 
 target_sources(platform_s
     INTERFACE
-        $<$<STREQUAL:"${TFM_FIH_PROFILE}","HIGH">:${PLATFORM_DIR}/ext/common/template/tfm_fih_rng.c>
+        $<$<STREQUAL:"${TFM_FIH_PROFILE}","HIGH">:${PLATFORM_DIR}/ext/common/template/tfm_fih_platform.c>
     PRIVATE
         cmsis_drivers/Driver_Flash_RPI.c
         cmsis_drivers/Driver_USART_RPI.c
@@ -187,6 +192,12 @@ target_sources(platform_s
 
         rpi_trng.c
 
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:${CMAKE_CURRENT_SOURCE_DIR}/dtpm_spi.c>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:${CMAKE_CURRENT_SOURCE_DIR}/mboot_to_pcr.c>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:${PLATFORM_DIR}/ext/driver/tpm_client/tpm2_cmds.c>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:${PLATFORM_DIR}/ext/driver/tpm_client/tpm2_chip.c>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:${PLATFORM_DIR}/ext/driver/tpm_client/tpm2_fifo.c>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:${PLATFORM_DIR}/ext/driver/tpm_client/tpm2_fifo_spi.c>
         $<$<NOT:$<BOOL:${PLATFORM_DEFAULT_ATTEST_HAL}>>:${CMAKE_CURRENT_SOURCE_DIR}/attest_hal.c>
         $<$<OR:$<BOOL:${TFM_S_REG_TEST}>,$<BOOL:${TFM_NS_REG_TEST}>>:${CMAKE_CURRENT_SOURCE_DIR}/plat_test.c>
         $<$<BOOL:${TFM_PARTITION_PLATFORM}>:${CMAKE_CURRENT_SOURCE_DIR}/services/src/tfm_platform_system.c>
@@ -211,6 +222,13 @@ target_compile_definitions(platform_s
         $<$<BOOL:${TEST_S_FPU}>:TEST_S_FPU>
         $<$<BOOL:${ITS_ENCRYPTION}>:ITS_ENCRYPTION>
         $<$<BOOL:${TFM_MULTI_CORE_TOPOLOGY}>:TFM_MULTI_CORE_TOPOLOGY>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:CS_GPIO=${CS_GPIO}>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:MISO_GPIO=${MISO_GPIO}>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:MOSI_GPIO=${MOSI_GPIO}>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:SCLK_GPIO=${SCLK_GPIO}>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:RESET_GPIO=${RESET_GPIO}>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:SPI_MODE=${SPI_MODE}>
+        $<$<BOOL:${TFM_PARTITION_DTPM_CLIENT}>:SPI_DELAY_US=${SPI_DELAY_US}>
 )
 
 # GNU Arm compiler version greater equal than *11.3.Rel1*
@@ -225,6 +243,7 @@ endif()
 if(BL2)
     target_sources(platform_bl2
         PRIVATE
+            bl2/boot_hal_bl2.c
             cmsis_drivers/Driver_Flash_RPI_bl2.c
             cmsis_drivers/Driver_USART_RPI.c
             $<$<NOT:$<BOOL:${PLATFORM_DEFAULT_OTP}>>:${CMAKE_CURRENT_SOURCE_DIR}/rp2350_otp.c>
@@ -253,6 +272,7 @@ if(BL2)
 
     target_include_directories(platform_bl2
         PUBLIC
+            bl2
             partition
             retarget
             device/config
@@ -303,44 +323,46 @@ endif()
 
 #========================= Files for building NS platform =====================#
 
-install(FILES       ${PLATFORM_DIR}/ext/common/test_interrupt.c
-                    ${TARGET_PLATFORM_PATH}/cmsis_drivers/Driver_USART_RPI.c
-                    ${TARGET_PLATFORM_PATH}/pico-sdk.patch
-        DESTINATION ${INSTALL_PLATFORM_NS_DIR})
+if (TFM_LOAD_NS_IMAGE)
+    install(FILES       ${PLATFORM_DIR}/ext/common/test_interrupt.c
+                        ${TARGET_PLATFORM_PATH}/cmsis_drivers/Driver_USART_RPI.c
+                        ${TARGET_PLATFORM_PATH}/pico-sdk.patch
+            DESTINATION ${INSTALL_PLATFORM_NS_DIR})
 
-install(DIRECTORY   ${TARGET_PLATFORM_PATH}/device
-                    ${TARGET_PLATFORM_PATH}/cmsis_drivers
-        DESTINATION ${INSTALL_PLATFORM_NS_DIR})
+    install(DIRECTORY   ${TARGET_PLATFORM_PATH}/device
+                        ${TARGET_PLATFORM_PATH}/cmsis_drivers
+            DESTINATION ${INSTALL_PLATFORM_NS_DIR})
 
-install(DIRECTORY   ${PLATFORM_DIR}/ext/target/arm/drivers
-        DESTINATION ${INSTALL_PLATFORM_NS_DIR}/ext/target/arm)
+    install(DIRECTORY   ${PLATFORM_DIR}/ext/target/arm/drivers
+            DESTINATION ${INSTALL_PLATFORM_NS_DIR}/ext/target/arm)
 
-install(FILES       ${TARGET_PLATFORM_PATH}/partition/region_defs.h
-                    ${TARGET_PLATFORM_PATH}/partition/flash_layout.h
-                    ${TARGET_PLATFORM_PATH}/target_cfg.h
-                    ${TARGET_PLATFORM_PATH}/tfm_peripherals_def.h
-                    ${TARGET_PLATFORM_PATH}/platform_multicore.h
-                    ${TARGET_PLATFORM_PATH}/tfm_builtin_key_ids.h
-                    ${PLATFORM_DIR}/include/tfm_plat_defs.h
-                    ${CMAKE_SOURCE_DIR}/lib/fih/inc/fih.h
-        DESTINATION ${INSTALL_PLATFORM_NS_DIR}/include)
+    install(FILES       ${TARGET_PLATFORM_PATH}/partition/region_defs.h
+                        ${TARGET_PLATFORM_PATH}/partition/flash_layout.h
+                        ${TARGET_PLATFORM_PATH}/target_cfg.h
+                        ${TARGET_PLATFORM_PATH}/tfm_peripherals_def.h
+                        ${TARGET_PLATFORM_PATH}/platform_multicore.h
+                        ${TARGET_PLATFORM_PATH}/tfm_builtin_key_ids.h
+                        ${PLATFORM_DIR}/include/tfm_plat_defs.h
+                        ${CMAKE_SOURCE_DIR}/lib/fih/inc/fih.h
+            DESTINATION ${INSTALL_PLATFORM_NS_DIR}/include)
 
-install(FILES       ${TARGET_PLATFORM_PATH}/linker_ns.ld
-        DESTINATION ${INSTALL_PLATFORM_NS_DIR}/linker_scripts)
+    install(FILES       ${TARGET_PLATFORM_PATH}/linker_ns.ld
+            DESTINATION ${INSTALL_PLATFORM_NS_DIR}/linker_scripts)
 
-# copy all files from active platform directory
-install(DIRECTORY   ${TARGET_PLATFORM_PATH}/ns/
-        DESTINATION ${INSTALL_PLATFORM_NS_DIR})
+    # copy all files from active platform directory
+    install(DIRECTORY   ${TARGET_PLATFORM_PATH}/ns/
+            DESTINATION ${INSTALL_PLATFORM_NS_DIR})
 
-install(FILES       ${TARGET_PLATFORM_PATH}/cpuarch.cmake
-                    ${TARGET_PLATFORM_PATH}/pico_sdk_import.cmake
-        DESTINATION ${INSTALL_PLATFORM_NS_DIR})
+    install(FILES       ${TARGET_PLATFORM_PATH}/cpuarch.cmake
+                        ${TARGET_PLATFORM_PATH}/pico_sdk_import.cmake
+            DESTINATION ${INSTALL_PLATFORM_NS_DIR})
 
-# Copy the platform specific config
-install(FILES       ${TARGET_PLATFORM_PATH}/config.cmake
-                    ${STATIC_ASSERT_OVERRIDE_HEADER}
-        DESTINATION ${INSTALL_PLATFORM_NS_DIR})
+    # Copy the platform specific config
+    install(FILES       ${TARGET_PLATFORM_PATH}/config.cmake
+                        ${STATIC_ASSERT_OVERRIDE_HEADER}
+            DESTINATION ${INSTALL_PLATFORM_NS_DIR})
 
-# Install test configs
-install(DIRECTORY   ${TARGET_PLATFORM_PATH}/tests
-        DESTINATION ${INSTALL_PLATFORM_NS_DIR})
+    # Install test configs
+    install(DIRECTORY   ${TARGET_PLATFORM_PATH}/tests
+            DESTINATION ${INSTALL_PLATFORM_NS_DIR})
+endif()

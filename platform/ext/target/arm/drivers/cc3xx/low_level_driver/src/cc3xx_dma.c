@@ -69,7 +69,8 @@ static uintptr_t remap_addr(uintptr_t addr)
 
 #else
 
-static uintptr_t remap_addr(uintptr_t addr) {
+static uintptr_t remap_addr(uintptr_t addr)
+{
     return addr;
 }
 
@@ -142,10 +143,8 @@ static void wait_for_dma_complete(void)
     P_CC3XX->host_rgf.host_rgf_icr = poll_mask;
 }
 
-static void process_data(const void* buf, size_t length)
+static void process_data(const void *buf, size_t length)
 {
-    uintptr_t remapped_buf = (uintptr_t)NULL;
-
     /* Enable the DMA clock */
     P_CC3XX->misc.dma_clk_enable = 0x1U;
 
@@ -160,16 +159,11 @@ static void process_data(const void* buf, size_t length)
     /* Reset the AXI_ERROR and SYM_DMA_COMPLETED interrupts */
     P_CC3XX->host_rgf.host_rgf_icr |= 0xFF0U;
 
-    if (dma_state.input_src == CC3XX_DMA_INPUT_SRC_CPU_MEM) {
-        /* remap the address, particularly for TCMs */
-        remapped_buf = remap_addr((uintptr_t)buf);
-    }
-
     if (dma_state.block_buf_needs_output) {
-        uintptr_t output_addr = dma_state.output_addr;
+        const uintptr_t remap_output_addr = remap_addr(dma_state.output_addr);
 #ifdef CC3XX_CONFIG_DMA_BURST_RESTRICTED_ENABLE
         /* Force single transactions for restricted addresses */
-        if (is_addr_burst_restricted(output_addr)) {
+        if (is_addr_burst_restricted(remap_output_addr)) {
             P_CC3XX->ahb.ahbm_singles = 0x1UL;
         } else {
             P_CC3XX->ahb.ahbm_singles = 0x0UL;
@@ -177,7 +171,7 @@ static void process_data(const void* buf, size_t length)
 #endif /* CC3XX_CONFIG_DMA_BURST_RESTRICTED_ENABLE */
 
         /* Set the data target */
-        P_CC3XX->dout.dst_lli_word0 = output_addr;
+        P_CC3XX->dout.dst_lli_word0 = remap_output_addr;
         /* And the length */
         P_CC3XX->dout.dst_lli_word1 = length;
 
@@ -189,7 +183,7 @@ static void process_data(const void* buf, size_t length)
          * set up an MPU covering the input and output regions so they can be
          * marked as SHAREABLE (which is not currently implemented).
          */
-        SCB_CleanInvalidateDCache_by_Addr((volatile void *)output_addr, length);
+        SCB_CleanInvalidateDCache_by_Addr((volatile void *)remap_output_addr, length);
 #endif /* CC3XX_CONFIG_DMA_CACHE_FLUSH_ENABLE */
 
         dma_state.output_addr += length;
@@ -197,6 +191,8 @@ static void process_data(const void* buf, size_t length)
     }
 
     if (dma_state.input_src == CC3XX_DMA_INPUT_SRC_CPU_MEM) {
+        /* remap the address, particularly for TCMs */
+        const uintptr_t remapped_buf = remap_addr((uintptr_t)buf);
 #ifdef CC3XX_CONFIG_DMA_CACHE_FLUSH_ENABLE
         /* Flush the input data. Note that this is only enough to avoid cache
          * issues if the CPU is in a busy-wait loop while the access completes.
@@ -234,7 +230,7 @@ void cc3xx_lowlevel_dma_copy_data(void* dest, const void* src, size_t length)
     cc3xx_lowlevel_dma_set_output(dest, length);
 
     /* This starts the copy */
-    cc3xx_lowlevel_dma_buffered_input_data(src, length, true);
+    cc3xx_lowlevel_dma_buffered_input_data(src, length, true, true);
     cc3xx_lowlevel_dma_flush_buffer(false);
 }
 
@@ -265,14 +261,14 @@ void cc3xx_lowlevel_dma_copy_data_from_rng_sram(void* dest,
 }
 
 cc3xx_err_t cc3xx_lowlevel_dma_buffered_input_data(const void* buf, size_t length,
-                                                   bool write_output)
+                                                   bool write_output, bool validate_out)
 {
     size_t block_buf_size_free =
         dma_state.block_buf_size - dma_state.block_buf_size_in_use;
     size_t data_to_process_length = 0;
     size_t dma_input_length = 0;
 
-    if (write_output) {
+    if (write_output && validate_out) {
         if (length > dma_state.output_size) {
             FATAL_ERR(CC3XX_ERR_DMA_OUTPUT_BUFFER_TOO_SMALL);
             return CC3XX_ERR_DMA_OUTPUT_BUFFER_TOO_SMALL;
@@ -287,7 +283,7 @@ cc3xx_err_t cc3xx_lowlevel_dma_buffered_input_data(const void* buf, size_t lengt
         /* If we need to output the block buffer, and then new data shouldn't be
          * output, then the block buffer needs to be flushed
          */
-        if (dma_state.block_buf_needs_output != write_output) {
+        if (dma_state.block_buf_needs_output && !write_output) {
             cc3xx_lowlevel_dma_flush_buffer(false);
         } else {
             data_to_process_length =
@@ -353,10 +349,9 @@ void cc3xx_lowlevel_dma_set_buffer_size(size_t size) {
     assert(size <= CC3XX_DMA_BLOCK_BUF_MAX_SIZE);
 }
 
-void cc3xx_lowlevel_dma_set_output(void* buf, size_t length)
+void cc3xx_lowlevel_dma_set_output(void *buf, size_t length)
 {
-    /* remap the address, particularly for TCMs */
-    dma_state.output_addr = remap_addr((uintptr_t)buf);
+    dma_state.output_addr = (uintptr_t)buf;
     dma_state.output_size = length;
 }
 

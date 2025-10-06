@@ -11,12 +11,19 @@
 #include "cc3xx_tests.h"
 #include "rse_provisioning_tests.h"
 #include "test_state_transitions.h"
+#include "test_nv_counters.h"
+#include "test_otp_lcm.h"
+#include "test_drivers_kmu.h"
+#include "test_integrity_checker_drv.h"
+#include "test_rse_zero_count.h"
+#include "test_dpa_hardened_word_copy.h"
+#include "test_bl1_rse_kmu_keys.h"
+#include "test_atu_rse_drv.h"
+#include "test_atu_rse_lib.h"
 
 #ifdef TEST_DCSU_DRV
 #include "test_dcsu_drv.h"
 #endif /* TEST_DCSU_DRV */
-
-#define ARRAY_SIZE(arr) (sizeof(arr)/sizeof((arr)[0]))
 
 static struct conditional_test_t provisioning_tests[] = {
     {
@@ -274,18 +281,32 @@ static struct conditional_test_t state_transitions[] = {
     },
 };
 
-static struct test_t bl1_1_extra_tests[100];
+static struct test_t bl1_1_extra_tests[123];
 
 void register_testsuite_extra_bl1_1(struct test_suite_t *p_test_suite)
 {
     set_testsuite("RSE Tests", bl1_1_extra_tests, 0, p_test_suite);
+
+    add_common_nv_counter_tests(p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
+    add_common_otp_lcm_tests(p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
+    add_common_rse_zero_counter_tests(p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
+    add_common_dpa_hardened_word_copy_tests(p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
+
+    add_natdrv_integrity_checker_tests(p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
+
+    add_drivers_kmu_tests(p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
+
+    add_bl1_rse_kmu_keys_tests(p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
+
+    add_natdrv_atu_rse_drv_tests(p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
+    add_natdrv_atu_rse_lib_tests(p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
 
 #ifdef TEST_DCSU_DRV
     add_dcsu_drv_tests_to_testsuite(p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
 #endif /* TEST_DCSU_DRV */
 
     add_conditional_tests_to_testsuite(provisioning_tests, ARRAY_SIZE(provisioning_tests),
-                                       p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
+                                      p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
 
     add_cc3xx_tests_to_testsuite(p_test_suite, ARRAY_SIZE(bl1_1_extra_tests));
 

@@ -15,6 +15,15 @@
 
 #include "fih.h"
 #include "tfm_hal_defs.h"
+#include "cmsis_compiler.h"
+
+/**
+ * \brief Default value of the reset syndrome register that a platform can pass
+ *        to \a tfm_hal_system_reset() safely. It can be overridden
+ */
+#ifndef TFM_PLAT_SWSYN_DEFAULT
+#define TFM_PLAT_SWSYN_DEFAULT (0x0UL)
+#endif /* TFM_PLAT_SWSYN_DEFAULT */
 
 /**
  * \brief This function performs the platform-specific initialization.
@@ -28,14 +37,32 @@
 FIH_RET_TYPE(enum tfm_hal_status_t) tfm_hal_platform_init(void);
 
 /**
- * \brief System reset
+ * \brief Get system reset syndrome. The reset syndrome is usually a register
+ *        which stores the reason for the system's last reset.
+ *
+ * \return Returns the reset syndrome value
  */
-void tfm_hal_system_reset(void);
+uint32_t tfm_hal_get_reset_syndrome(void);
+
+/**
+ * \brief Clear a particular system reset syndrome bit
+ *
+ * \param[in] bit_pos       Bit position to clear
+ */
+void tfm_hal_clear_reset_syndrome_bit(uint8_t bit_pos);
+
+/**
+ * \brief System reset
+ *
+ * \param[in] sw_reset_syn_value  The value to be used for setting the reset
+                                  syndrome register before reset happens
+ */
+__NO_RETURN void tfm_hal_system_reset(uint32_t sw_reset_syn_value);
 
 /**
  * \brief System halt
  */
-void tfm_hal_system_halt(void);
+__NO_RETURN void tfm_hal_system_halt(void);
 
 /**
  * \brief Set up the RNG for use with random delays.

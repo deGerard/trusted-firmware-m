@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2024 Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 #ifndef __MHU_H__
 #define __MHU_H__
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <limits.h>
@@ -36,7 +37,8 @@ extern "C" {
  */
 enum mhu_error_t {
     MHU_ERR_NONE =  0,
-    MHU_ERR_SIGNAL_WAIT_CLEAR_INVALID_ARG = MHU_ERROR_BASE,
+    MHU_ERR_INVALID_VERSION = MHU_ERROR_BASE,
+    MHU_ERR_SIGNAL_WAIT_CLEAR_INVALID_ARG,
     MHU_ERR_WAIT_SIGNAL_CLEAR_INVALID_ARG,
     MHU_ERR_CLEAR_WAIT_SIGNAL_INVALID_ARG,
     MHU_ERR_VALIDATE_BUFFER_PARAMS_INVALID_ARG,
@@ -82,13 +84,26 @@ enum mhu_error_t mhu_init_receiver(void *mhu_receiver_dev);
  *
  * \return Returns mhu_error_t error code.
  *
- * \note The send_buffer must be 4-byte aligned and its length must be at least
- *       (4 - (size % 4)) bytes bigger than the data size to prevent buffer
+ * \note For MHUv2, the send_buffer must be 4-byte aligned and its length must
+ *       be at least ((size + 3) & ~(size_t)0b11) bytes to prevent buffer
  *       over-reading.
  */
 enum mhu_error_t mhu_send_data(void *mhu_sender_dev,
                                const uint8_t *send_buffer,
                                size_t size);
+/**
+ * \brief Checks whether data is available from MHU.
+ *
+ * \param[in]  mhu_receiver_dev  Pointer to the receiver MHU.
+ * \param[out] is_available      Pointer to a bool that will be set to true if
+ *                               data is available to be read, false otherwise.
+ *
+ * \return Returns mhu_error_t error code.
+ *
+ * \note This function can be used for polling when the MHU receiver interrupt
+ *       is not used, prior to calling mhu_receive_data().
+ */
+enum mhu_error_t mhu_data_is_available(void *mhu_receiver_dev, bool *is_available);
 
 /**
  * \brief Wait for data from MHU.
@@ -103,24 +118,33 @@ enum mhu_error_t mhu_send_data(void *mhu_sender_dev,
 enum mhu_error_t mhu_wait_data(void *mhu_receiver_dev);
 
 /**
+ * \brief Retrieves the length of the received message from the MHU receiver device.
+ *
+ * \param[in]  mhu_receiver_dev  Pointer to the receiver MHU.
+ * \param[out] msg_len           Pointer to a variable where the message length
+ *                               will be stored.
+ *
+ * \return Returns mhu_error_t error code.
+ */
+enum mhu_error_t mhu_get_receive_msg_len(void *mhu_receiver_dev, size_t *msg_len);
+
+/**
  * \brief Receives data from MHU.
  *
  * \param[in]     mhu_receiver_dev  Pointer to the receiver MHU.
  * \param[out]    receive_buffer    Pointer the buffer where to store the
  *                                  received data.
- * \param[in,out] size              As input the size of the receive_buffer,
- *                                  as output the number of bytes received.
- *                                  As a limitation, the size of the buffer
- *                                  must be a multiple of 4.
+ * \param[in]     msg_len           The length of message to receive, must be
+    *                               less then the value given by
+                                    \ref mhu_get_receive_msg_len. The \ref
+                                    receive_buffer must be at least this size.
  *
  * \return Returns mhu_error_t error code.
  *
- * \note The receive_buffer must be 4-byte aligned and its length must be a
- *       multiple of 4.
+ * \note For MHUv2, the receive_buffer must be 4-byte aligned and its length
+ *       must be a multiple of 4.
  */
-enum mhu_error_t mhu_receive_data(void *mhu_receiver_dev,
-                                  uint8_t *receive_buffer,
-                                  size_t *size);
+enum mhu_error_t mhu_receive_data(void *mhu_receiver_dev, uint8_t *receive_buffer, size_t msg_len);
 
 /**
  * \brief Signals an interrupt over the last available channel and wait for the

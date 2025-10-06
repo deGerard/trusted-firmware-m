@@ -166,7 +166,7 @@ static void prv_process_metadata(struct partition_t *p_pt)
     p_rt_meta->psa_fns = &psa_api_thread_fn_call;
 #else
     FIH_CALL(tfm_hal_boundary_need_switch, fih_rc, get_spm_boundary(), p_pt->boundary);
-    if (fih_not_eq(fih_rc, fih_int_encode(false))) {
+    if (FIH_NOT_EQ(fih_rc, false)) {
         p_rt_meta->psa_fns = &psa_api_svc;
     } else {
         p_rt_meta->psa_fns = &psa_api_thread_fn_call;
@@ -336,8 +336,11 @@ void backend_init_comp_assuredly(struct partition_t *p_pt, uint32_t service_sett
 
     watermark_stack(p_pt);
 
-    THRD_INIT(&p_pt->thrd, &p_pt->ctx_ctrl,
-              TO_THREAD_PRIORITY(PARTITION_PRIORITY(p_pldi->flags)));
+    /*
+     * Use Secure Partition loading order as the initial priority of scheduling
+     * in IPC backend.
+     */
+    THRD_INIT(&p_pt->thrd, &p_pt->ctx_ctrl, p_pldi->load_order);
 
     thrd_entry = (comp_init_fns[index])(p_pt, service_setting, &param);
 
@@ -350,7 +353,7 @@ uint32_t backend_system_run(void)
 {
     uint32_t control;
     const struct partition_t *p_cur_pt;
-    fih_int fih_rc = FIH_FAILURE;
+    FIH_DECLARE(fih_rc, FIH_FAILURE);
 
     assert(SPM_THREAD_CONTEXT);
 
@@ -375,7 +378,7 @@ uint32_t backend_system_run(void)
                             struct partition_t, ctx_ctrl);
 
     FIH_CALL(tfm_hal_activate_boundary, fih_rc, p_cur_pt->p_ldinf, p_cur_pt->boundary);
-    if (fih_not_eq(fih_rc, fih_int_encode(TFM_HAL_SUCCESS))) {
+    if (FIH_NOT_EQ(fih_rc, TFM_HAL_SUCCESS)) {
         tfm_core_panic();
     }
 
@@ -514,7 +517,7 @@ uint32_t backend_abi_leaving_spm(uint32_t result)
 
 uint64_t ipc_schedule(uint32_t exc_return)
 {
-    fih_int fih_rc = FIH_FAILURE;
+    FIH_DECLARE(fih_rc, FIH_FAILURE);
     FIH_RET_TYPE(bool) fih_bool;
     AAPCS_DUAL_U32_T ctx_ctrls;
     const struct partition_t *p_part_curr;
@@ -570,10 +573,10 @@ uint64_t ipc_schedule(uint32_t exc_return)
          */
         FIH_CALL(tfm_hal_boundary_need_switch, fih_bool,
                  p_part_curr->boundary, p_part_next->boundary);
-        if (fih_not_eq(fih_bool, fih_int_encode(false))) {
+        if (FIH_NOT_EQ(fih_bool, false)) {
             FIH_CALL(tfm_hal_activate_boundary, fih_rc,
                      p_part_next->p_ldinf, p_part_next->boundary);
-            if (fih_not_eq(fih_rc, fih_int_encode(TFM_HAL_SUCCESS))) {
+            if (FIH_NOT_EQ(fih_rc, TFM_HAL_SUCCESS)) {
                 tfm_core_panic();
             }
         }

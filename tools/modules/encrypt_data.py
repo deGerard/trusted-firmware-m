@@ -8,13 +8,15 @@
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-import key_derivation
-
 import argparse
+import secrets
+import sys
+
+from tfm_tools.arg_utils import *
+from tfm_tools import key_derivation
+
 import logging
 logger = logging.getLogger("TF-M.{}".format(__name__))
-from arg_utils import *
-import secrets
 
 def _encrypt_aes_ctr(data : bytes,
                      iv : bytes,
@@ -81,12 +83,7 @@ def encrypt_data(data : bytes,
                                   iv = iv)
     return iv, encrypted_data
 
-script_description = """
-Encrypt some data
-"""
-if __name__ == "__main__":
-    import argparse
-
+def main():
     parser = argparse.ArgumentParser(allow_abbrev=False,
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                      description=script_description)
@@ -103,3 +100,10 @@ if __name__ == "__main__":
     config |= parse_args_automatically(args, ["data"])
 
     print(encrypt_data(**config)[1].hex())
+
+
+script_description = """
+Encrypt some data
+"""
+if __name__ == "__main__":
+    sys.exit(main())

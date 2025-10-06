@@ -38,18 +38,24 @@ set(PROJECT_CONFIG_HEADER_FILE          ""          CACHE FILEPATH  "User define
 # External libraries source and version
 set(MBEDCRYPTO_PATH                     "DOWNLOAD"  CACHE PATH      "Path to Mbed Crypto (or DOWNLOAD to fetch automatically")
 set(MBEDCRYPTO_FORCE_PATCH              OFF         CACHE BOOL      "Always apply MBed Crypto patches")
-set(MBEDCRYPTO_VERSION                  "mbedtls-3.6.3" CACHE STRING "The version of Mbed Crypto to use")
+set(MBEDCRYPTO_VERSION                  "mbedtls-3.6.4" CACHE STRING "The version of Mbed Crypto to use")
 set(MBEDCRYPTO_GIT_REMOTE               "https://github.com/Mbed-TLS/mbedtls.git" CACHE STRING "The URL (or path) to retrieve MbedTLS from.")
 
 set(MCUBOOT_PATH                        "DOWNLOAD"  CACHE PATH      "Path to MCUboot (or DOWNLOAD to fetch automatically")
-set(MCUBOOT_VERSION                     "v2.2.0-rc1" CACHE STRING   "The version of MCUboot to use")
+set(MCUBOOT_FORCE_PATCH                 OFF         CACHE BOOL      "Always apply MCUboot patches")
+set(MCUBOOT_VERSION                     "v2.2.0"    CACHE STRING    "The version of MCUboot to use")
 
 set(TFM_EXTRAS_REPO_PATH                "DOWNLOAD"  CACHE PATH      "Path to tf-m-extras repo (or DOWNLOAD to fetch automatically")
-set(TFM_EXTRAS_REPO_VERSION             "8679c4c"   CACHE STRING    "The version of tf-m-extras to use")
+set(TFM_EXTRAS_REPO_VERSION             "f051983"   CACHE STRING    "The version of tf-m-extras to use")
+
+set(LIB_EVENTLOG_PATH                   "DOWNLOAD"  CACHE PATH      "Path to LibEventLog repo (or DOWNLOAD to fetch automatically")
+set(LIB_EVENTLOG_VERSION                "e2f92a92"  CACHE STRING    "The version of LibEventLog to use")
+set(EVENT_LOG_BUFFER_SIZE               "0x100"     CACHE STRING    "Size of event log buffer size")
 
 set(PLATFORM_PSA_ADAC_SECURE_DEBUG      FALSE       CACHE BOOL      "Whether to use psa-adac secure debug.")
+set(PSA_ADAC_AS_TFM_RUNTIME_SERVICE     OFF         CACHE BOOL      "Integrate ADAC as TF-M runtime service")
 set(PLATFORM_PSA_ADAC_SOURCE_PATH       "DOWNLOAD"  CACHE PATH      "Path to source dir of psa-adac.")
-set(PLATFORM_PSA_ADAC_VERSION           "819a254"   CACHE STRING    "The version of psa-adac to use.")
+set(PLATFORM_PSA_ADAC_VERSION           "f2809ae"   CACHE STRING    "The version of psa-adac to use.")
 set(PLATFORM_RAM_FS                     OFF         CACHE BOOL      "Enables the use of RAM instead of the persistent storage device to store the FS in Secure Storage services")
 
 set(PLATFORM_IS_FVP                     FALSE       CACHE BOOL      "Whether to enable FVP or FPGA build of the platform.")
@@ -92,6 +98,7 @@ set(TFM_LOG_FATAL_ERRORS                OFF         CACHE BOOL      "Log fatal e
 set(TFM_LOG_NONFATAL_ERRORS             OFF         CACHE BOOL      "Log non-fatal errors when they occur to aid debugging")
 set(TFM_HALT_ON_FATAL_ERRORS            OFF         CACHE BOOL      "On fatal errors in the secure firmware, halt immediately to allow debugging")
 set(TFM_LOG_ERR_FILE_AND_LINE           OFF         CACHE BOOL      "Log file name and line numbers of fatal and non-fatal errors")
+set(TFM_LOAD_NS_IMAGE                   ON          CACHE BOOL      "Whether to load an NS image")
 
 set(CONFIG_TFM_HALT_ON_CORE_PANIC       OFF         CACHE BOOL       "On fatal errors in the secure firmware, halt instead of rebooting.")
 set(CONFIG_TFM_BACKTRACE_ON_CORE_PANIC  OFF         CACHE BOOL       "On fatal errors in secure firmware, log backtrace and then halt")
@@ -104,6 +111,7 @@ set(CONFIG_TFM_BRANCH_PROTECTION_FEAT   BRANCH_PROTECTION_DISABLED   CACHE STRIN
 
 set(NUM_MAILBOX_QUEUE_SLOT              1           CACHE BOOL      "Number of mailbox queue slots")
 set(TFM_PLAT_SPECIFIC_MULTI_CORE_COMM   OFF         CACHE BOOL      "Whether to use a platform specific inter-core communication instead of mailbox in dual-cpu topology")
+set(TFM_HYBRID_PLATFORM_API_BROKER      OFF         CACHE BOOL      "Use a API broker for API calls for Hybrid Platforms")
 
 set(DEBUG_AUTHENTICATION                CHIP_DEFAULT CACHE STRING   "Debug authentication setting. [CHIP_DEFAULT, NONE, NS_ONLY, FULL")
 set(SECURE_UART1                        OFF         CACHE BOOL      "Enable secure UART1")
@@ -127,6 +135,7 @@ set(PLATFORM_DEFAULT_UART_STDOUT        ON          CACHE BOOL      "Use default
 set(PLATFORM_DEFAULT_NV_SEED            ON          CACHE BOOL      "Use default NV seed implementation.")
 set(PLATFORM_DEFAULT_SHARED_MEASUREMENT_DATA ON     CACHE BOOL      "Use default shared measurement data location")
 set(PLATFORM_DEFAULT_OTP                ON          CACHE BOOL      "Use trusted on-chip flash to implement OTP memory")
+set(PLATFORM_DEFAULT_MEASUREMENT_SLOTS  ON          CACHE BOOL     "Use default Measured Boot slots")
 set(PLATFORM_DEFAULT_OTP_WRITEABLE      ON          CACHE BOOL      "Use OTP memory with write support")
 set(PLATFORM_DEFAULT_PROVISIONING       ON          CACHE BOOL      "Use default provisioning implementation")
 set(PLATFORM_DEFAULT_SYSTEM_RESET_HALT  ON          CACHE BOOL      "Use default system reset/halt implementation")
@@ -169,9 +178,10 @@ of this setting to 'STRING' by passing the :<type> portion when specifying the s
 the command line. E.g. '-DTFM_MBEDCRYPTO_CONFIG_PATH:STRING=some_file_which_is_generated.h' \
 This can be useful if the config file is generated and placed inside a directory already added \
 to the include path of Mbed TLS.")
-set(TFM_MBEDCRYPTO_CONFIG_CLIENT_PATH         "${CMAKE_SOURCE_DIR}/lib/ext/mbedcrypto/mbedcrypto_config/tfm_mbedcrypto_config_client.h" CACHE PATH "Bare minimum config required on the client side.")
-set(TFM_MBEDCRYPTO_PSA_CRYPTO_CONFIG_PATH     "${CMAKE_SOURCE_DIR}/lib/ext/mbedcrypto/mbedcrypto_config/crypto_config_default.h" CACHE PATH "Config to use PSA Crypto setting for Mbed Crypto.")
-set(TFM_MBEDCRYPTO_PLATFORM_EXTRA_CONFIG_PATH ""    CACHE PATH      "Config to append to standard Mbed Crypto config, used by platforms to configure feature support")
+set(TFM_MBEDCRYPTO_CONFIG_CLIENT_PATH                     "${CMAKE_SOURCE_DIR}/lib/ext/mbedcrypto/mbedcrypto_config/tfm_mbedcrypto_config_client.h" CACHE PATH "Bare minimum config required on the client side.")
+set(TFM_MBEDCRYPTO_PSA_CRYPTO_CONFIG_PATH                 "${CMAKE_SOURCE_DIR}/lib/ext/mbedcrypto/mbedcrypto_config/crypto_config_default.h" CACHE PATH "Config to use PSA Crypto setting for Mbed Crypto.")
+set(TFM_MBEDCRYPTO_PLATFORM_EXTRA_CONFIG_PATH             ""    CACHE PATH      "Config to append to standard Mbed Crypto config, used by platforms to configure feature support.")
+set(TFM_MBEDCRYPTO_PSA_CRYPTO_PLATFORM_EXTRA_CONFIG_PATH  ""    CACHE PATH      "Config to append to standard PSA Crypto setting for Mbed Crypto, used by platforms to configure cryptographic feature support.")
 
 ########################## TF-M performance ####################################
 
@@ -209,3 +219,9 @@ set_property(CACHE BL1_1_SANITIZE PROPERTY STRINGS ${SANITIZE_OPTIONS})
 set_property(CACHE BL1_2_SANITIZE PROPERTY STRINGS ${SANITIZE_OPTIONS})
 set_property(CACHE BL2_SANITIZE   PROPERTY STRINGS ${SANITIZE_OPTIONS})
 set_property(CACHE TFM_SANITIZE   PROPERTY STRINGS ${SANITIZE_OPTIONS})
+
+########################## TF-M hex file generation ############################
+
+set(TFM_MERGE_HEX_FILES                    OFF        CACHE BOOL   "Create merged hex file in the end of the build")
+set(TFM_S_HEX_FILE_PATH                    ""         CACHE STRING "Merged secure hex file's path")
+set(TFM_S_HEX_MERGE_LIST                   ""         CACHE STRING "Merged secure hex file's target list")

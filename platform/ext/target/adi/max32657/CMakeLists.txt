@@ -163,6 +163,31 @@ if(NOT PLATFORM_DEFAULT_PROVISIONING)
     )
 endif()
 
+if(ITS_ENCRYPTION)
+
+    set(SECURE_FW_PARTITION_CRYPTO_DIR  ${PLATFORM_DIR}/../secure_fw/partitions/crypto)
+    set(TFM_MBEDCRYPTO_CONFIG_CLIENT_PATH ${TFM_MBEDCRYPTO_CONFIG_PATH})
+
+    target_compile_definitions(tfm_psa_rot_partition_its
+        PRIVATE
+            ITS_ENCRYPTION
+            MBEDTLS_CONFIG_FILE="${TFM_MBEDCRYPTO_CONFIG_CLIENT_PATH}"
+            MBEDTLS_PSA_CRYPTO_CONFIG_FILE="${TFM_MBEDCRYPTO_PSA_CRYPTO_CONFIG_PATH}"
+    )
+
+    target_include_directories(tfm_psa_rot_partition_its
+        PRIVATE
+        $<BUILD_INTERFACE:${PLATFORM_DIR}/../interface/include>
+        ${SECURE_FW_PARTITION_CRYPTO_DIR}/psa_driver_api
+    )
+
+    target_sources(tfm_psa_rot_partition_its
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/tfm_hal_its_encryption_mbed.c
+    )
+
+endif()
+
 #========================= Files for building NS platform =====================#
 
 install(FILES       ${TARGET_PLATFORM_PATH}/cmsis_drivers/Driver_USART.c
@@ -195,6 +220,11 @@ install(FILES       ${TARGET_PLATFORM_PATH}/device/src/startup_${TARGET_LC}.c
 install(FILES       ${HAL_ADI_CMSIS_INC_DIR}/max32657.h
         DESTINATION ${INSTALL_PLATFORM_NS_DIR}/device/inc)
 
+install(FILES       ${PLATFORM_DIR}/ext/target/${TFM_PLATFORM}/accelerator/include/adi_psa_random.h
+                    ${PLATFORM_DIR}/ext/target/${TFM_PLATFORM}/accelerator/include/crypto_accelerator_config.h
+                    ${PLATFORM_DIR}/ext/target/${TFM_PLATFORM}/accelerator/include/mbedtls_accelerator_config.h
+        DESTINATION ${INSTALL_PLATFORM_NS_DIR}/accelerator/include)
+
 install(FILES       ${PLATFORM_DIR}/ext/common/gcc/tfm_common_ns.ld
         DESTINATION ${INSTALL_PLATFORM_NS_DIR}/linker_scripts)
 
@@ -215,7 +245,7 @@ install(DIRECTORY   ${TARGET_PLATFORM_PATH}/tests
 
 # Copy the S-NS peripheral & memory configuration
 install(FILES       ${TARGET_PLATFORM_PATH}/s_ns_access.cmake
-        DESTINATION ${CMAKE_BINARY_DIR}/../)
+        DESTINATION ${INSTALL_PLATFORM_NS_DIR})
 
 # Export configuration flags
 target_compile_definitions(tfm_spm

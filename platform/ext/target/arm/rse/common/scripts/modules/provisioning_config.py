@@ -6,15 +6,15 @@
 #
 #-------------------------------------------------------------------------------
 
-import c_struct
-import c_macro
-import c_include
+
+from tfm_tools.c_struct import C_array, C_enum, C_struct
+from tfm_tools.c_macro import C_macro
+from tfm_tools import c_include
+from tfm_tools import arg_utils
 import pickle
-import sys
-from c_struct import C_array, C_enum
-import arg_utils
 import argparse
-from otp_config import OTP_config
+from rse.otp_config import OTP_config
+from rse.routing_tables import Routing_tables
 from cryptography.hazmat.primitives import hashes
 
 import logging
@@ -22,12 +22,15 @@ logger = logging.getLogger("TF-M.{}".format(__name__))
 
 from cryptography.hazmat.primitives.serialization import load_der_public_key, Encoding, PublicFormat
 
-from crypto_conversion_utils import convert_hash_define
+from tfm_tools.crypto_conversion_utils import convert_hash_define
 
-all_regions = ['cm', 'dm']
+all_regions = ['non_endorsed_dm', 'non_secret_cm', 'secret_cm', 'non_secret_dm', 'secret_dm']
 
 def _get_rotpk_area_index(f : str):
-    _, f = f.rsplit("rotpk_areas_", 1)
+    try:
+        _, f = f.rsplit("rotpk_areas_", 1)
+    except ValueError:
+        return None
     if "." in f:
         f, _ = f.split(".", 1)
     if "_" in f:
@@ -41,6 +44,18 @@ def _get_rotpk_index(f : str):
     if "_" in f:
         _, f = f.rsplit("_", 1)
     return int(f)
+
+def _get_field_owner_lcs(field_owner : str):
+    return field_owner[-2:]
+
+def _get_rotpk_str(field_owner : str, f : str):
+    area_index = _get_rotpk_area_index(f)
+    rotpk_index = _get_rotpk_index(f)
+    if area_index is not None:
+        return "{}.rotpk_areas_{}.rotpk_{}".format(_get_field_owner_lcs(field_owner),
+                                                   area_index, rotpk_index)
+    else:
+        return "rotpk_{}".format(rotpk_index)
 
 def _handle_rotpk_add(config,
                       parser : argparse.ArgumentParser,
@@ -121,7 +136,13 @@ def add_arguments(parser : argparse.ArgumentParser,
     return provisioning_config
 
 def _get_policy_field(provisioning_config, field_owner, area_index):
-    return getattr(provisioning_config, "{}_layout".format(field_owner)).get_field("{}.rotpk_areas_{}.{}_rotpk_policies".format(field_owner, area_index, field_owner))
+    lcs = _get_field_owner_lcs(field_owner)
+    if area_index is not None:
+        rotpk_policy_str = "{}.rotpk_areas_{}.{}_rotpk_policies".format(lcs, area_index, lcs)
+    else:
+        rotpk_policy_str = "{}_rotpk_policies".format(field_owner, field_owner)
+
+    return getattr(provisioning_config, "{}_layout".format(field_owner)).get_field(rotpk_policy_str)
 
 def _handle_rotpk_hash_alg(args: argparse.Namespace,
                            f : str,
@@ -130,8 +151,7 @@ def _handle_rotpk_hash_alg(args: argparse.Namespace,
                            provisioning_config,
                            **kwargs
                            ):
-    rotpk = "{}.rotpk_areas_{}.rotpk_{}".format(field_owner, _get_rotpk_area_index(f),
-                                                _get_rotpk_index(f))
+    rotpk = _get_rotpk_str(field_owner, f)
     rotpk = arg_utils.join_prefix(rotpk, field_owner)
     if rotpk not in vars(args) or not getattr(args, rotpk):
         logger.warning("{} set but {} is not".format(f, rotpk))
@@ -156,8 +176,7 @@ def _handle_rotpk_policy(args: argparse.Namespace,
                          provisioning_config,
                          **kwargs
                          ):
-    rotpk = "{}.rotpk_areas_{}.rotpk_{}".format(field_owner, _get_rotpk_area_index(f),
-                                                _get_rotpk_index(f))
+    rotpk = _get_rotpk_str(field_owner, f)
     rotpk = arg_utils.join_prefix(rotpk, field_owner)
     if rotpk not in vars(args) or not getattr(args, rotpk):
         logger.warning("{} set but {} is not".format(f, rotpk))
@@ -178,8 +197,7 @@ def _handle_rotpk_type(args: argparse.Namespace,
                        provisioning_config,
                        **kwargs
                        ):
-    rotpk = "{}.rotpk_areas_{}.rotpk_{}".format(field_owner, _get_rotpk_area_index(f),
-                                                _get_rotpk_index(f))
+    rotpk = _get_rotpk_str(field_owner, f)
     rotpk = arg_utils.join_prefix(rotpk, field_owner)
     if rotpk not in vars(args) or not getattr(args, rotpk):
         logger.warning("{} set but {} is not".format(f, rotpk))
@@ -206,7 +224,8 @@ def _handle_rotpk(args: argparse.Namespace,
     assert(v)
 
     rotpk_index = _get_rotpk_index(f)
-    if hasattr(otp_config.defines, "RSE_OTP_{}_ROTPK_IS_HASH_NOT_KEY".format(field_owner.upper())):
+    is_hash_not_key = hasattr(otp_config.defines, "RSE_OTP_{}_ROTPK_IS_HASH_NOT_KEY".format(_get_field_owner_lcs(field_owner).upper()))
+    if is_hash_not_key:
         area_index = _get_rotpk_area_index(f)
         assert (area_index, rotpk_index) in getattr(provisioning_config, "{}_rotpk_hash_algs".format(field_owner)).keys(), "--{}:{}.rotpk_hash_alg_{} required but not set".format(field_owner, field_owner, rotpk_index)
 
@@ -278,6 +297,9 @@ def parse_args(args : argparse.Namespace,
             continue
 
         try:
+            if not hasattr(v, '__len__'):
+                logger.debug("Not setting length for {}:{} as it has no length".format(field_owner, f))
+                continue
             getattr(out["provisioning_config"], "{}_layout".format(field_owner)).get_field(f + "_size").set_value(len(v))
         except KeyError:
             logger.debug("Not setting length for {}:{} as no key matches {}_len".format(field_owner, f, f))
@@ -286,9 +308,13 @@ def parse_args(args : argparse.Namespace,
     return out;
 
 class Provisioning_config:
-    def __init__(self, cm, dm, defines, enums):
-        self.cm_layout = cm
-        self.dm_layout = dm
+    def __init__(self, non_endorsed_dm, non_secret_cm, secret_cm,
+                 non_secret_dm, secret_dm, defines, enums):
+        self.non_endorsed_dm_layout = non_endorsed_dm
+        self.non_secret_cm_layout = non_secret_cm
+        self.secret_cm_layout = secret_cm
+        self.non_secret_dm_layout = non_secret_dm
+        self.secret_dm_layout = secret_dm
         self.defines = defines
         self.defines._definitions = {k:v for k,v in self.defines._definitions.items() if not callable(v)}
         self.defines.__dict__ = {k:v for k,v in self.defines.__dict__.items() if not callable(v)}
@@ -296,24 +322,30 @@ class Provisioning_config:
         self.enums = enums
         for e in self.enums:
             self.__dict__ |= self.enums[e].dict
-        self.cm_rotpk_hash_algs = {}
-        self.dm_rotpk_hash_algs = {}
-        self.cm_rotpk_types = {}
-        self.dm_rotpk_types = {}
+        self.non_endorsed_dm_rotpk_hash_algs = {}
+        self.non_secret_cm_rotpk_hash_algs = {}
+        self.secret_cm_rotpk_hash_algs = {}
+        self.non_secret_dm_rotpk_hash_algs = {}
+        self.secret_dm_rotpk_hash_algs = {}
+        self.non_endorsed_dm_rotpk_types = {}
+        self.non_secret_cm_rotpk_types = {}
+        self.secret_cm_rotpk_types = {}
+        self.non_secret_dm_rotpk_types = {}
+        self.secret_dm_rotpk_types = {}
 
     @staticmethod
     def from_h_file(h_file_path, policy_h_file_path, includes, defines):
-        make_region = lambda x: c_struct.C_struct.from_h_file(h_file_path,
+        make_region = lambda x: C_struct.from_h_file(h_file_path,
                                                               "rse_{}_provisioning_values_t".format(x),
                                                               includes, defines)
         regions = [make_region(x) for x in all_regions]
-        config = c_macro.C_macro.from_h_file(h_file_path, includes, defines)
+        config = C_macro.from_h_file(h_file_path, includes, defines)
 
-        rotpk_types = c_struct.C_enum.from_h_file(policy_h_file_path, "rse_rotpk_type", includes, defines)
-        rotpk_policies = c_struct.C_enum.from_h_file(policy_h_file_path, "rse_rotpk_policy", includes, defines)
-        rotpk_hash_algs = c_struct.C_enum.from_h_file(policy_h_file_path, "rse_rotpk_hash_alg", includes, defines)
+        rotpk_types = C_enum.from_h_file(policy_h_file_path, "rse_rotpk_type", includes, defines)
+        rotpk_policies = C_enum.from_h_file(policy_h_file_path, "rse_rotpk_policy", includes, defines)
+        rotpk_hash_algs = C_enum.from_h_file(policy_h_file_path, "rse_rotpk_hash_alg", includes, defines)
 
-        create_enum = lambda x:c_struct.C_enum.from_h_file(policy_h_file_path, x, includes, defines)
+        create_enum = lambda x:C_enum.from_h_file(policy_h_file_path, x, includes, defines)
         enum_names = [
             'rse_rotpk_type',
             'rse_rotpk_policy',
@@ -333,6 +365,16 @@ class Provisioning_config:
         with open(file_path, "wb") as f:
             pickle.dump(self, f)
 
+    def __get_layout_field_and_set(self,
+                                   is_cm : bool,
+                                   field_path : str,
+                                   value : bytes):
+        lcs = "cm" if is_cm else "dm"
+        try:
+            getattr(getattr(self, "secret_{}_layout".format(lcs)), field_path).set_value_from_bytes(value)
+        except AttributeError:
+            getattr(getattr(self, "non_secret_{}_layout".format(lcs)), field_path).set_value_from_bytes(value)
+
     def set_area_infos_from_otp_config(self,
                                        otp_config : OTP_config,
                                        **kwargs : dict,
@@ -340,22 +382,27 @@ class Provisioning_config:
         dm_sets_dm_and_dynamic_area_size = hasattr(otp_config.defines, "DM_SETS_DM_AND_DYNAMIC_AREA_SIZE")
 
         if otp_config.header.cm_area_info.offset.get_value() != 0:
-            self.cm_layout.cm_area_info.set_value_from_bytes(otp_config.header.cm_area_info.to_bytes())
+            self.__get_layout_field_and_set(True, "cm_area_info", otp_config.header.cm_area_info.to_bytes())
 
         if otp_config.header.bl1_2_area_info.offset.get_value() != 0:
-            self.cm_layout.bl1_2_area_info.set_value_from_bytes(otp_config.header.bl1_2_area_info.to_bytes())
+            self.__get_layout_field_and_set(True, "bl1_2_area_info", otp_config.header.bl1_2_area_info.to_bytes())
 
         if otp_config.header.dm_area_info.offset.get_value() != 0:
             if not dm_sets_dm_and_dynamic_area_size:
-                self.cm_layout.dm_area_info.set_value_from_bytes(otp_config.header.dm_area_info.to_bytes())
+                self.__get_layout_field_and_set(True, "dm_area_info", otp_config.header.dm_area_info.to_bytes())
             if dm_sets_dm_and_dynamic_area_size:
-                self.dm_layout.dm_area_info.set_value_from_bytes(otp_config.header.dm_area_info.to_bytes())
+                self.__get_layout_field_and_set(False, "dm_area_info", otp_config.header.dm_area_info.to_bytes())
 
         if otp_config.header.dynamic_area_info.offset.get_value() != 0:
             if not dm_sets_dm_and_dynamic_area_size:
-                self.cm_layout.dynamic_area_info.set_value_from_bytes(otp_config.header.dynamic_area_info.to_bytes())
+                self.__get_layout_field_and_set(True, "dynamic_area_info", otp_config.header.dynamic_area_info.to_bytes())
             if dm_sets_dm_and_dynamic_area_size:
-                self.dm_layout.dynamic_area_info.set_value_from_bytes(otp_config.header.dynamic_area_info.to_bytes())
+                self.__get_layout_field_and_set(False, "dynamic_area_info", otp_config.header.dynamic_area_info.to_bytes())
+
+    def set_routing_tables(self,
+                           idx : int,
+                           routing_tables : Routing_tables):
+        self.non_secret_dm_layout.dm.routing_tables.set_value_from_bytes(routing_tables.get_rse_routing_table_bytes(idx))
 
 script_description = """
 This script takes an instance of rse_provisioning_layout.h, rse_rotpk_policy.h,
@@ -366,15 +413,13 @@ provisioning bundles, or to allow other scripts to access the provisioning
 configuration options.
 """
 if __name__ == "__main__":
-    import argparse
-    import c_include
 
     parser = argparse.ArgumentParser(allow_abbrev=False,
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                      description=script_description)
-    parser.add_argument("--rse_provisioning_layout_h_file", help="path to rse_provisioning_layout.h", type=arg_utils.arg_type_filepath, required=True)
-    parser.add_argument("--rse_rotpk_policy_h_file", help="path to rse_rotpk_policy.h", type=arg_utils.arg_type_filepath, required=True)
-    parser.add_argument("--compile_commands_file", help="path to compile_commands.json", type=arg_utils.arg_type_filepath, required=True)
+    parser.add_argument("--rse_provisioning_layout_h_file", help="path to rse_provisioning_layout.h", type=arg_utils.arg_type_input_filepath, required=True)
+    parser.add_argument("--rse_rotpk_policy_h_file", help="path to rse_rotpk_policy.h", type=arg_utils.arg_type_input_filepath, required=True)
+    parser.add_argument("--compile_commands_file", help="path to compile_commands.json", type=arg_utils.arg_type_input_filepath, required=True)
     parser.add_argument("--provisioning_config_output_file", help="file to output provisioning config to", required=True)
     parser.add_argument("--log_level", help="log level", required=False, default="ERROR", choices=logging._levelToName.values())
 

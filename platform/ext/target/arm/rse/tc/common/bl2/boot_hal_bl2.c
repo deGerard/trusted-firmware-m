@@ -28,6 +28,8 @@
 #include "bl2_image_id.h"
 #include "Driver_Flash.h"
 #include "host_flash_atu.h"
+#include "atu_config.h"
+#include "atu_rse_lib.h"
 #include "sic_boot.h"
 #include "plat_def_fip_uuid.h"
 #include "flash_map/flash_map.h"
@@ -50,22 +52,21 @@ extern const int flash_map_entry_num;
 static int clear_ap_sds_region(void)
 {
     enum atu_error_t err;
+    uint32_t log_addr;
+    uint32_t size;
 
-    err = atu_initialize_region(&ATU_DEV_S,
-                                TEMPORARY_ATU_MAPPING_REGION_ID,
-                                TEMPORARY_ATU_MAPPING_BASE,
-                                PLAT_RSE_AP_SDS_ATU_MAPPING_BASE,
-                                PLAT_RSE_AP_SDS_ATU_MAPPING_SIZE);
+    err = atu_rse_map_addr_automatically(&ATU_DEV_S, PLAT_RSE_AP_SDS_ATU_MAPPING_BASE,
+                                         PLAT_RSE_AP_SDS_ATU_MAPPING_SIZE,
+                                         ATU_ENCODE_ATTRIBUTES_SECURE_PAS, &log_addr, &size);
     if (err != ATU_ERR_NONE) {
         return err;
     }
 
-    memset((void *)(TEMPORARY_ATU_MAPPING_BASE +
+    memset((void *)(log_addr +
             (PLAT_RSE_AP_SDS_BASE - PLAT_RSE_AP_SDS_ATU_MAPPING_BASE)),
             0, PLAT_RSE_AP_SDS_SIZE);
 
-    err = atu_uninitialize_region(&ATU_DEV_S,
-                                TEMPORARY_ATU_MAPPING_REGION_ID);
+    err = atu_rse_free_addr(&ATU_DEV_S, log_addr);
     if (err != ATU_ERR_NONE) {
         return err;
     }
@@ -81,6 +82,7 @@ int32_t boot_platform_post_init(void)
     enum tfm_plat_err_t plat_err;
 #endif /* PLATFORM_HAS_BOOT_DMA */
     int32_t result;
+    enum atu_error_t atu_err;
 
     result = rse_sam_init(RSE_SAM_INIT_SETUP_FULL);
     if (result != 0) {
@@ -126,6 +128,12 @@ int32_t boot_platform_post_init(void)
     }
 #endif /* RSE_XIP */
 
+    atu_err = atu_rse_drv_init(&ATU_DEV_S, ATU_DOMAIN_ROOT, atu_regions_static, atu_stat_count);
+    if (atu_err != ATU_ERR_NONE) {
+        BOOT_LOG_ERR("Failed to initialize ATU");
+        return 1;
+    }
+
 #ifdef RSE_USE_SDS_LIB
     result = clear_ap_sds_region();
     if (result) {
@@ -158,6 +166,10 @@ static struct flash_area *flash_map_slot_from_flash_area_id(uint32_t area_id)
 int boot_platform_pre_load(uint32_t image_id)
 {
     uuid_t uuid;
+    uint64_t image_load_phy_addr = 0;
+    uint32_t image_load_logical_addr = 0;
+    uint32_t image_max_size = 0;
+    uint64_t header_phy_addr = 0;
     uint32_t offsets[2];
     struct flash_area *flash_area_primary =
         flash_map_slot_from_flash_area_id(FLASH_AREA_IMAGE_PRIMARY(image_id));
@@ -165,7 +177,7 @@ int boot_platform_pre_load(uint32_t image_id)
         flash_map_slot_from_flash_area_id(FLASH_AREA_IMAGE_SECONDARY(image_id));
     int rc;
 
-    kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
+    fih_delay();
 
     if (flash_area_primary == NULL || flash_area_secondary == NULL) {
         return TFM_PLAT_ERR_PRE_LOAD_IMG_BY_BL2_FAIL;
@@ -174,11 +186,35 @@ int boot_platform_pre_load(uint32_t image_id)
     switch(image_id) {
     case RSE_BL2_IMAGE_SCP:
         uuid = UUID_RSE_FIRMWARE_SCP_BL1;
+
+        image_load_phy_addr = SCP_BOOT_SRAM_BASE;
+        image_max_size = SCP_BOOT_SRAM_SIZE;
+        header_phy_addr = SCP_BOOT_SRAM_BASE + SCP_BOOT_SRAM_SIZE
+                                        - HOST_IMAGE_HEADER_SIZE;
+        image_load_logical_addr = HOST_BOOT_IMAGE1_LOAD_BASE_S;
+        host_flash_atu_setup_image_output_slots(image_load_phy_addr,
+                                                image_load_logical_addr,
+                                                image_max_size,
+                                                header_phy_addr);
         break;
     case RSE_BL2_IMAGE_AP:
         uuid = UUID_RSE_FIRMWARE_AP_BL1;
+
+        image_load_phy_addr = AP_BOOT_SRAM_BASE;
+        image_max_size = AP_BOOT_SRAM_SIZE;
+        header_phy_addr = AP_BOOT_SRAM_BASE + AP_BOOT_SRAM_SIZE
+                                        - HOST_IMAGE_HEADER_SIZE;
+        image_load_logical_addr = HOST_BOOT_IMAGE0_LOAD_BASE_S;
+        host_flash_atu_setup_image_output_slots(image_load_phy_addr,
+                                                image_load_logical_addr,
+                                                image_max_size,
+                                                header_phy_addr);
         break;
     case RSE_BL2_IMAGE_NS:
+        /*
+         * The IMAGE_NS's output slot can be accessed without ATU so the
+         * host_flash_atu_setup_image_output_slots doesn't have to be called.
+         */
 #ifndef RSE_XIP
         uuid = UUID_RSE_FIRMWARE_NS;
 #else
@@ -186,6 +222,10 @@ int boot_platform_pre_load(uint32_t image_id)
 #endif /* RSE_XIP */
         break;
     case RSE_BL2_IMAGE_S:
+        /*
+         * The IMAGE_S's output slot can be accessed without ATU so the
+         * host_flash_atu_setup_image_output_slots doesn't have to be called.
+         */
 #ifndef RSE_XIP
         uuid = UUID_RSE_FIRMWARE_S;
 #else
@@ -196,7 +236,7 @@ int boot_platform_pre_load(uint32_t image_id)
         return TFM_PLAT_ERR_PRE_LOAD_IMG_BY_BL2_FAIL;
     }
 
-    rc = host_flash_atu_init_regions_for_image(uuid, offsets);
+    rc = host_flash_atu_setup_image_input_slots(uuid, offsets);
     if (rc) {
         return TFM_PLAT_ERR_PRE_LOAD_IMG_BY_BL2_FAIL;
     }
@@ -210,26 +250,24 @@ int boot_platform_pre_load(uint32_t image_id)
 static int tc_scp_release_reset(void)
 {
     struct rse_sysctrl_t *sysctrl;
-
     int err;
+    uint32_t log_addr;
+    uint32_t size;
 
-    err = atu_initialize_region(&ATU_DEV_S,
-                                TEMPORARY_ATU_MAPPING_REGION_ID,
-                                TEMPORARY_ATU_MAPPING_BASE,
-                                SCP_SYSTEM_CONTROL_REGS_PHYS_BASE,
-                                SCP_SYSTEM_CONTROL_REGS_SIZE);
+    err = atu_rse_map_addr_automatically(&ATU_DEV_S, SCP_SYSTEM_CONTROL_REGS_PHYS_BASE,
+                                         SCP_SYSTEM_CONTROL_REGS_SIZE,
+                                         ATU_ENCODE_ATTRIBUTES_SECURE_PAS, &log_addr, &size);
     if (err != ATU_ERR_NONE) {
         return err;
     }
 
     /* SCP SSE-310 System Control Block same as RSE System Control
      * Registers */
-    sysctrl = (struct rse_sysctrl_t *)(TEMPORARY_ATU_MAPPING_BASE +
+    sysctrl = (struct rse_sysctrl_t *)(log_addr +
         SCP_SYSTEM_CONTROL_BLOCK_OFFSET);
     sysctrl->cpuwait = 0;
 
-    err = atu_uninitialize_region(&ATU_DEV_S,
-                                TEMPORARY_ATU_MAPPING_REGION_ID);
+    err = atu_rse_free_addr(&ATU_DEV_S, log_addr);
     if (err != ATU_ERR_NONE) {
         return err;
     }
@@ -264,6 +302,16 @@ int boot_platform_post_load(uint32_t image_id)
         }
         BOOT_LOG_INF("Got SCP BL1 started event");
 
+        err = atu_rse_free_addr(&ATU_DEV_S, HOST_BOOT_IMAGE1_LOAD_BASE_S);
+        if (err != ATU_ERR_NONE) {
+            return err;
+        }
+
+        err = atu_rse_free_addr(&ATU_DEV_S, HOST_BOOT_IMAGE1_LOAD_BASE_S + HOST_IMAGE_HEADER_SIZE);
+        if (err != ATU_ERR_NONE) {
+            return err;
+        }
+
     } else if (image_id == RSE_BL2_IMAGE_AP) {
         memset((void *)HOST_BOOT_IMAGE0_LOAD_BASE_S, 0, HOST_IMAGE_HEADER_SIZE);
         BOOT_LOG_INF("Telling SCP to start AP cores");
@@ -272,13 +320,23 @@ int boot_platform_post_load(uint32_t image_id)
             return TFM_PLAT_ERR_POST_LOAD_IMG_BY_BL2_FAIL;
         }
         BOOT_LOG_INF("Sent the signal to SCP");
+
+        err = atu_rse_free_addr(&ATU_DEV_S, HOST_BOOT_IMAGE0_LOAD_BASE_S);
+        if (err != ATU_ERR_NONE) {
+            return err;
+        }
+
+        err = atu_rse_free_addr(&ATU_DEV_S, HOST_BOOT_IMAGE0_LOAD_BASE_S + HOST_IMAGE_HEADER_SIZE);
+        if (err != ATU_ERR_NONE) {
+            return err;
+        }
     }
 #else
     BOOT_LOG_INF("Skipping SCP signaling as TC_NO_RELEASE_RESET is defined");
 #endif /* TC_NO_RELEASE_RESET */
 
 
-    err = host_flash_atu_uninit_regions();
+    err = host_flash_atu_free_input_image_regions();
     if (err) {
         return TFM_PLAT_ERR_POST_LOAD_IMG_BY_BL2_FAIL;
     }
@@ -288,46 +346,22 @@ int boot_platform_post_load(uint32_t image_id)
 
 bool boot_platform_should_load_image(uint32_t image_id)
 {
-#ifndef RSE_LOAD_NS_IMAGE
+#ifndef TFM_LOAD_NS_IMAGE
     if (image_id == RSE_BL2_IMAGE_NS) {
         return false;
     }
-#endif /* RSE_LOAD_NS_IMAGE */
+#endif /* TFM_LOAD_NS_IMAGE */
 
     return true;
 }
 
 #ifdef RSE_GPT_SUPPORT
-/* Register boot failure by setting bit 24 (SWSYN) of SWRESET register.
- * On reset, the SWSYN value propagates to the RESET_SYNDROME register
- * which will be read to understand cause of reset.
- */
-static void boot_platform_register_failed_boot(void)
-{
-    uint32_t reg_value;
-    struct rse_sysctrl_t *rse_sysctrl = (struct rse_sysctrl_t *)RSE_SYSCTRL_BASE_S;
-
-    /* The SWSYN shall be written along with SWRESETREQ (bit position 5)
-     * otherwise it is ignored
-     */
-    reg_value = ((1 & 0xff) << SWSYN_FAILED_BOOT_BIT_POS) | (1 << 5);
-
-    /* Raise reset request for new attempt */
-    __DSB();
-    rse_sysctrl->swreset = reg_value;
-    __DSB();
-
-    while(1) {
-        __NOP();
-    }
-}
-
 int boot_initiate_recovery_mode(uint32_t image_id)
 {
     (void)image_id;
 
-    /* Mark as failed boot attempt */
-    boot_platform_register_failed_boot();
+    /* Mark as failed boot attempt and reboot */
+    tfm_hal_system_reset(RSE_SWSYN_FAILED_BOOT_MASK);
 
     return 0;
 }
@@ -399,7 +433,7 @@ void boot_platform_start_next_image(struct boot_arm_vector_table *vt)
 
     rse_sam_finish();
 
-    kmu_random_delay(&KMU_DEV_S, KMU_DELAY_LIMIT_32_CYCLES);
+    fih_delay();
 
 #if defined(__ARM_ARCH_8M_MAIN__) || defined(__ARM_ARCH_8M_BASE__) \
  || defined(__ARM_ARCH_8_1M_MAIN__)

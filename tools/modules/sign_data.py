@@ -6,6 +6,8 @@
 #
 #-------------------------------------------------------------------------------
 
+import sys
+
 from cryptography.hazmat.primitives.asymmetric import utils, ec
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.serialization import load_pem_private_key, Encoding, PublicFormat
@@ -15,10 +17,11 @@ import pyhsslms
 from cryptography.hazmat.primitives.ciphers.aead import AESCCM
 import secrets
 
+from tfm_tools.arg_utils import *
+
 import argparse
 import logging
 logger = logging.getLogger("TF-M.{}".format(__name__))
-from arg_utils import *
 
 def _asn1_sig_to_raw(sig : bytes , curve : ec.EllipticCurve) -> bytes:
     point_size = curve.key_size // 8
@@ -72,9 +75,9 @@ def _sign_ecdsa(data : bytes,
 
     if dsr_output_file:
         dsr_output_file.write(data_hash)
-        exit(0)
+        sys.exit(0)
 
-    asn1_sig = priv_key.sign(data_hash, ec.ECDSA(utils.Prehashed(hash_alg())))
+    asn1_sig = priv_key.sign(data_hash, ec.ECDSA(utils.Prehashed(hash_alg()),deterministic_signing=True))
 
     return _asn1_sig_to_raw(asn1_sig, priv_key.curve)
 
@@ -85,7 +88,7 @@ def _sign_lms(data : bytes,
               ) -> bytes:
     if dsr_output_file:
         dsr_output_file.write(data)
-        exit(0)
+        sys.exit(0)
 
     priv_key = pyhsslms.HssLmsPrivateKey(key[:-4])
     logger.info("Signing with LMS key {}".format(key))
@@ -144,9 +147,7 @@ def parse_args(args : argparse.Namespace,
 script_description = """
 Sign some data.
 """
-if __name__ == "__main__":
-    import argparse
-
+def main():
     parser = argparse.ArgumentParser(allow_abbrev=False,
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                      description=script_description)
@@ -163,3 +164,6 @@ if __name__ == "__main__":
     config |= parse_args_automatically(args, ["data"])
 
     print(sign_data(**config).hex())
+
+if __name__ == "__main__":
+    sys.exit(main())

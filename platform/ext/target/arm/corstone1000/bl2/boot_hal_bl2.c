@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -22,7 +22,7 @@
 #include "tfm_plat_provisioning.h"
 #include "fwu_agent.h"
 
-#ifdef PLATFORM_PSA_ADAC_SECURE_DEBUG
+#if defined(PLATFORM_PSA_ADAC_SECURE_DEBUG) && !defined(PSA_ADAC_AS_TFM_RUNTIME_SERVICE)
 #include "psa_adac_platform.h"
 #endif
 
@@ -111,27 +111,6 @@ static bool fill_flash_map_with_fip_data(uint8_t boot_index) {
 #endif /* !TFM_S_REG_TEST */
 
 #ifdef PLATFORM_PSA_ADAC_SECURE_DEBUG
-int psa_adac_to_tfm_apply_permissions(uint8_t permissions_mask[16])
-{
-    (void)permissions_mask;
-
-    int ret;
-    uint32_t dcu_reg_values[4];
-
-    /* Below values provide same access as when platform is in development
-       life cycle state */
-    dcu_reg_values[0] = 0xffffe7fc;
-    dcu_reg_values[1] = 0x800703ff;
-    dcu_reg_values[2] = 0xffffffff;
-    dcu_reg_values[3] = 0xffffffff;
-
-    ret = crypto_hw_apply_debug_permissions((uint8_t*)dcu_reg_values, 16);
-    BOOT_LOG_INF("%s: debug permission apply %s\n\r", __func__,
-            (ret == 0) ? "success" : "fail");
-
-    return ret;
-}
-
 uint8_t secure_debug_rotpk[32];
 #endif /* PLATFORM_PSA_ADAC_SECURE_DEBUG */
 
@@ -171,6 +150,9 @@ int32_t boot_platform_post_init(void)
 {
     int32_t result;
     enum tfm_plat_err_t plat_err;
+#ifdef PLATFORM_PSA_ADAC_SECURE_DEBUG
+    bool provisioning_required;
+#endif
 
 #ifdef CRYPTO_HW_ACCELERATOR
     result = crypto_hw_accelerator_init();
@@ -186,19 +168,27 @@ int32_t boot_platform_post_init(void)
     }
 
 #ifdef PLATFORM_PSA_ADAC_SECURE_DEBUG
-    if (!tfm_plat_provisioning_is_required()) {
+    plat_err = tfm_plat_provisioning_is_required(&provisioning_required);
+    if (plat_err != TFM_PLAT_ERR_SUCCESS) {
+        BOOT_LOG_ERR("Platform provisioning required check failed");
+        FIH_PANIC;
+    }
 
-        plat_err = tfm_plat_otp_read(PLAT_OTP_ID_SECURE_DEBUG_PK, 32, secure_debug_rotpk);
+    if (!provisioning_required) {
+
+        plat_err = tfm_plat_otp_read(SECURE_DEBUG_ROTPK_ID, 32, secure_debug_rotpk);
         if (plat_err != TFM_PLAT_ERR_SUCCESS) {
             return plat_err;
         }
 
+#ifndef PSA_ADAC_AS_TFM_RUNTIME_SERVICE
         result = tfm_to_psa_adac_corstone1000_secure_debug(secure_debug_rotpk, 32);
         BOOT_LOG_INF("%s: Corstone-1000 Secure Debug is a %s.\r\n", __func__,
                 (result == 0) ? "success" : "failure");
+#endif /* PSA_ADAC_AS_TFM_RUNTIME_SERVICE */
 
     }
-#endif
+#endif /* PLATFORM_PSA_ADAC_SECURE_DEBUG */
 
     return 0;
 }

@@ -6,17 +6,15 @@
 #
 #-------------------------------------------------------------------------------
 
-import c_struct
-import c_macro
-import c_include
+from tfm_tools.c_struct import C_struct, C_enum
+from tfm_tools.c_macro import C_macro
+from tfm_tools import c_include
+from tfm_tools import arg_utils
+from tfm_tools import sign_then_encrypt_data
 import pickle
-import sys
-from c_struct import C_enum
 from secrets import token_bytes
-import arg_utils
 from cryptography.hazmat.primitives.serialization import load_pem_private_key, Encoding, PublicFormat
 
-import sign_then_encrypt_data
 import argparse
 
 import logging
@@ -142,11 +140,11 @@ class Provisioning_message_config:
 
     @staticmethod
     def from_h_file(h_file_path, includes, defines):
-        message = c_struct.C_struct.from_h_file(h_file_path,
+        message = C_struct.from_h_file(h_file_path,
                                                 'rse_provisioning_message_t',
                                                 includes, defines)
 
-        create_enum = lambda x:c_struct.C_enum.from_h_file(h_file_path, x, includes, defines)
+        create_enum = lambda x:C_enum.from_h_file(h_file_path, x, includes, defines)
         enum_names = [
             'rse_provisioning_message_type_t',
             'rse_provisioning_blob_type_t',
@@ -159,11 +157,12 @@ class Provisioning_message_config:
             'rse_provisioning_blob_signature_config_t',
             'rse_provisioning_blob_personalization_config_t',
             'rse_provisioning_blob_sequencing_config_t',
+            'rse_provisioning_plain_data_type_t'
         ]
 
         enums = {x : create_enum(x) for x in enum_names}
 
-        config = c_macro.C_macro.from_h_file(h_file_path, includes, defines)
+        config = C_macro.from_h_file(h_file_path, includes, defines)
 
         return Provisioning_message_config(message, config, enums)
 
@@ -399,14 +398,17 @@ def create_blob_message(provisioning_message_config : Provisioning_message_confi
     return message.to_bytes()[:-message.blob.code_and_data_and_secret_values.get_size()] + aad[header_len:] + ciphertext
 
 def create_plain_data_message(provisioning_message_config : Provisioning_message_config,
+                              plain_data_type : C_enum,
                               data : bytes, **kwargs
                               ):
     message = provisioning_message_config.message
     defines = provisioning_message_config.defines
 
-    message.header.type.set_value(provisioning_message_config.RSE_PROVISIONING_MESSAGE_TYPE_BLOB.get_value())
+    message.header.type.set_value(provisioning_message_config.RSE_PROVISIONING_MESSAGE_TYPE_PLAIN_DATA.get_value())
     data_length = message.plain.get_size() - message.plain.data.get_size() + len(data)
     message.header.data_length.set_value(data_length)
+
+    message.plain.plain_metadata.set_value(plain_data_type.get_value())
 
     return message.to_bytes()[:message.header.get_size() + data_length - len(data)] + data
 
@@ -418,9 +420,6 @@ data messages, which can then be used to create binary provisioning messages, or
 to allow other scripts to access the provisioning message configuration options.
 """
 if __name__ == "__main__":
-    import argparse
-    import c_include
-
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--rse_provisioning_message_h_file", help="path to rse_provisioning_message.h", required=True)
     parser.add_argument("--compile_commands_file", help="path to compile_commands.json", required=True)

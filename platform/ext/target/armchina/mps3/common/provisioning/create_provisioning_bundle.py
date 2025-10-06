@@ -8,21 +8,7 @@
 import argparse
 import struct
 from elftools.elf.elffile import ELFFile
-
-
-def struct_pack(objects, pad_to=0):
-    defstring = "<"
-    for obj in objects:
-        defstring += str(len(obj)) + "s"
-
-    size = struct.calcsize(defstring)
-    if size < pad_to:
-        defstring += str(pad_to - size) + "x"
-    elif size > pad_to and pad_to != 0:
-        print("Error padding struct of size {} to {}".format(size, pad_to))
-        exit(1)
-
-    return (bytes(struct.pack(defstring, *objects)))
+from tfm_tools.struct_pack import struct_pack
 
 
 parser = argparse.ArgumentParser(allow_abbrev=False)
@@ -63,7 +49,7 @@ if code_section is not None:
     code = code_section.data()
 else:
     print("provisioning_bundle's code sections is mandatory")
-    exit(1)
+    sys.exit(1)
 
 if rwdata_section is not None:
     rwdata = rwdata_section.data()
@@ -79,7 +65,7 @@ if values_section is not None:
     values = values_section.data()
 else:
     print("provisioning_bundle's values sections is mandatory")
-    exit(1)
+    sys.exit(1)
 
 
 if args.bl1_2_padded_hash_input_file:

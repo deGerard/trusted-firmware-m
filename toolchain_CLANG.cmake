@@ -1,112 +1,136 @@
 #-------------------------------------------------------------------------------
-# SPDX-License-Identifier: BSD-3-Clause
 # SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
 #-------------------------------------------------------------------------------
-
+#
+# CMake toolchain file for "Arm Toolchain for Embedded"
+# Download page: https://github.com/arm/arm-toolchain/releases
+#
 set(CMAKE_SYSTEM_NAME Generic)
 
-# Specify the cross compiler
 set(CMAKE_C_COMPILER clang)
+set(CMAKE_C_COMPILER_FORCED TRUE)
+set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_COMPILER_TARGET ${CROSS_COMPILE})
 
 set(CMAKE_ASM_COMPILER clang)
+set(CMAKE_ASM_COMPILER_FORCED TRUE)
 set(CMAKE_ASM_COMPILER_TARGET ${CROSS_COMPILE})
 
-set(LINKER_VENEER_OUTPUT_FLAG -Wl,--cmse-implib,--out-implib=)
-set(COMPILER_CMSE_FLAG -mcmse -mfix-cmse-cve-2021-35465)
+# C++ support is not quaranted. This settings is to compile with RPi Pico SDK.
+set(CMAKE_CXX_COMPILER clang++)
+set(CMAKE_CXX_COMPILER_FORCED TRUE)
+set(CMAKE_CXX_STANDARD 11)
 
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+include(imported_target)
+
+# This variable name is a bit of a misnomer. The file it is set to is included
+# at a particular step in the compiler initialisation. It is used here to
+# configure the extensions for object files. Despite the name, it also works
+# with the Ninja generator.
 set(CMAKE_USER_MAKE_RULES_OVERRIDE ${CMAKE_CURRENT_LIST_DIR}/cmake/set_extensions.cmake)
 
-# CMAKE_C_COMPILER_VERSION is not guaranteed to be defined.
-EXECUTE_PROCESS( COMMAND ${CMAKE_C_COMPILER} -dumpversion OUTPUT_VARIABLE LLVM_VERSION )
-if (LLVM_VERSION VERSION_LESS 18.1.3)
-    message(FATAL_ERROR "Please use newer LLVM compiler version starting from 18.1.3")
+# CMAKE_C_COMPILER_VERSION is not initialised at this moment so do it manually
+EXECUTE_PROCESS( COMMAND ${CMAKE_C_COMPILER} -dumpversion OUTPUT_VARIABLE CMAKE_C_COMPILER_VERSION )
+if (CMAKE_C_COMPILER_VERSION VERSION_LESS 18.1.3)
+    message(FATAL_ERROR "Please use newer ATfE toolchain version starting from 18.1.3")
+elseif(CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL 21.0.0)
+    message(FATAL_ERROR "ATfE compiler versions 21.0.0 and above are no supported yet")
 endif()
 
-# ===================== Set toolchain CPU and Arch =============================
-# -mcpu gives better optimisation than -march so -mcpu shall be in preference
+include(mcpu_features)
 
-if (TFM_SYSTEM_PROCESSOR)
-    if(TFM_SYSTEM_DSP)
-        string(APPEND TFM_SYSTEM_PROCESSOR "+dsp")
-    else()
-        string(APPEND TFM_SYSTEM_PROCESSOR "+nodsp")
-    endif()
-    if(CONFIG_TFM_ENABLE_FP)
-        string(APPEND TFM_SYSTEM_PROCESSOR "+fp")
-    else()
-        string(APPEND TFM_SYSTEM_PROCESSOR "+nofp")
-    endif()
-
-    set(CMAKE_C_FLAGS        "-mcpu=${TFM_SYSTEM_PROCESSOR}")
-    set(CMAKE_ASM_FLAGS      "-mcpu=${TFM_SYSTEM_PROCESSOR}")
-else()
-    if(CONFIG_TFM_ENABLE_FP)
-        string(APPEND TFM_SYSTEM_ARCHITECTURE "+fp")
-    endif()
-    if(NOT TFM_SYSTEM_DSP)
-        string(APPEND TFM_SYSTEM_ARCHITECTURE "+nodsp")
-    endif()
-    set(CMAKE_C_FLAGS        "-march=${TFM_SYSTEM_ARCHITECTURE}")
-    set(CMAKE_CXX_FLAGS      "-march=${TFM_SYSTEM_ARCHITECTURE}")
-    set(CMAKE_ASM_FLAGS      "-march=${TFM_SYSTEM_ARCHITECTURE}")
-    set(CMAKE_ASM_CPU_FLAG  ${TFM_SYSTEM_ARCHITECTURE})
-endif()
-
-if (CONFIG_TFM_FLOAT_ABI STREQUAL "hard")
-    set(COMPILER_CP_FLAG -mfloat-abi=hard)
-    set(LINKER_CP_OPTION -mfloat-abi=hard)
-    if (CONFIG_TFM_ENABLE_FP OR CONFIG_TFM_ENABLE_MVE_FP)
-        set(COMPILER_CP_FLAG -mfloat-abi=hard -mfpu=${CONFIG_TFM_FP_ARCH})
-        set(LINKER_CP_OPTION -mfloat-abi=hard -mfpu=${CONFIG_TFM_FP_ARCH})
-    endif()
-else()
-    set(COMPILER_CP_FLAG -mfloat-abi=soft)
-    set(LINKER_CP_OPTION -mfloat-abi=soft)
-endif()
-
-set(BL1_COMPILER_CP_FLAG -mfloat-abi=soft)
-set(BL1_LINKER_CP_OPTION -mfloat-abi=soft -lcrt0 -ldummyhost)
-
-set(BL2_COMPILER_CP_FLAG -mfloat-abi=soft)
-set(BL2_LINKER_CP_OPTION -mfloat-abi=soft -lcrt0 -ldummyhost)
+# Compiler and linker optoins common to all modules
 
 file(REAL_PATH "${CMAKE_SOURCE_DIR}/../" TOP_LEVEL_PROJECT_DIR)
 
 add_compile_options(
-     -Wno-ignored-optimization-argument
-     -Wno-unused-command-line-argument
-     -Wall
-     -Wno-error=cpp
-     -c
-     -fdata-sections
-     -ffunction-sections
-     -fno-builtin
-     -fshort-enums
-     -fshort-wchar
-     -funsigned-char
-     # Strip /workspace/
-     -fmacro-prefix-map=${TOP_LEVEL_PROJECT_DIR}/=
-     # Strip /workspace/trusted-firmware-m
-     -fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=
-     -std=c99
+    -fdiagnostics-color=always
+    -Wno-ignored-optimization-argument
+    -Wno-unused-command-line-argument
+    -Wall
+    -Wno-error=cpp
+    -fdata-sections
+    -ffunction-sections
+    -fno-builtin
+    -fshort-enums
+    -fshort-wchar
+    -funsigned-char
+    -fno-exceptions
+    -fno-rtti
+    # Strip /workspace/
+    -fmacro-prefix-map=${TOP_LEVEL_PROJECT_DIR}/=
+    # Strip /workspace/trusted-firmware-m
+    -fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=
 )
 
-# Pointer Authentication Code and Branch Target Identification (PACBTI) Options
-# Not currently supported for LLVM.
-if(NOT ${CONFIG_TFM_BRANCH_PROTECTION_FEAT} STREQUAL BRANCH_PROTECTION_DISABLED)
-    message(FATAL_ERROR "BRANCH_PROTECTION NOT supported for LLVM")
-endif()
-
 add_link_options(
-    -lclang_rt.builtins   # needed for  __aeabi_memclr4(), __aeabi_memclr8(), __aeabi_memcpy4()
+    -mcpu=${TFM_SYSTEM_PROCESSOR_FEATURED}
     LINKER:-check-sections
     LINKER:-fatal-warnings
     LINKER:--gc-sections
 )
 
+set(LINKER_VENEER_OUTPUT_FLAG -Wl,--cmse-implib,--out-implib=)
+
 if(NOT CONFIG_TFM_MEMORY_USAGE_QUIET)
     add_link_options(LINKER:--print-memory-usage)
+endif()
+
+# A module (BL1, BL2, CP) specific addional compiler and linker optoins
+
+set(BL1_COMPILER_CP_FLAG -mfloat-abi=soft -mfpu=none)
+set(BL1_LINKER_CP_OPTION -mfpu=none)
+
+set(BL2_COMPILER_CP_FLAG -mfloat-abi=soft -mfpu=none)
+set(BL2_LINKER_CP_OPTION -mfpu=none)
+
+if (CONFIG_TFM_FLOAT_ABI STREQUAL "hard")
+    set(COMPILER_CP_FLAG -mfloat-abi=hard)
+    if (CONFIG_TFM_ENABLE_FP OR CONFIG_TFM_ENABLE_MVE_FP)
+        set(COMPILER_CP_FLAG -mfloat-abi=hard -mfpu=${CONFIG_TFM_FP_ARCH})
+    else()
+        set(COMPILER_CP_FLAG -mfloat-abi=soft -mfpu=none)
+    endif()
+endif()
+
+set(LINKER_CP_OPTION -lclang_rt.builtins -nostdlib)
+
+if (CMAKE_C_COMPILER_VERSION VERSION_LESS 20.0.0)
+   list(APPEND BL1_LINKER_CP_OPTION -lcrt0 -ldummyhost)
+   list(APPEND BL2_LINKER_CP_OPTION -lcrt0 -ldummyhost)
+else()
+   list(APPEND BL1_LINKER_CP_OPTION -ldummyhost)
+endif()
+
+if(CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL 19.0.0)
+   list(APPEND COMPILER_CP_FLAG -nostartfiles)
+endif()
+
+#
+# Pointer Authentication Code and Branch Target Identification (PACBTI) Options
+#
+if(NOT ${CONFIG_TFM_BRANCH_PROTECTION_FEAT} STREQUAL BRANCH_PROTECTION_DISABLED)
+    if (TFM_SYSTEM_ARCHITECTURE STREQUAL "armv8.1-m.main")
+        if (${CONFIG_TFM_BRANCH_PROTECTION_FEAT} STREQUAL BRANCH_PROTECTION_NONE)
+            set(BRANCH_PROTECTION_OPTIONS "none")
+        elseif(${CONFIG_TFM_BRANCH_PROTECTION_FEAT} STREQUAL BRANCH_PROTECTION_STANDARD)
+            set(BRANCH_PROTECTION_OPTIONS "standard")
+        elseif(${CONFIG_TFM_BRANCH_PROTECTION_FEAT} STREQUAL BRANCH_PROTECTION_PACRET)
+            set(BRANCH_PROTECTION_OPTIONS "pac-ret")
+        elseif(${CONFIG_TFM_BRANCH_PROTECTION_FEAT} STREQUAL BRANCH_PROTECTION_PACRET_LEAF)
+            set(BRANCH_PROTECTION_OPTIONS "pac-ret+leaf")
+        elseif(${CONFIG_TFM_BRANCH_PROTECTION_FEAT} STREQUAL BRANCH_PROTECTION_BTI)
+            set(BRANCH_PROTECTION_OPTIONS "bti")
+        endif()
+        add_compile_options(-mbranch-protection=${BRANCH_PROTECTION_OPTIONS})
+        message(NOTICE "BRANCH_PROTECTION enabled with: ${BRANCH_PROTECTION_OPTIONS}")
+    else()
+        message(FATAL_ERROR "Your architecture does not support BRANCH_PROTECTION")
+    endif()
 endif()
 
 # Macro for adding scatter files. Supports multiple files
@@ -115,9 +139,7 @@ macro(target_add_scatter_file target)
 
     add_library(${target}_scatter OBJECT)
     foreach(scatter_file ${ARGN})
-        target_sources(${target}_scatter
-            PRIVATE
-                ${scatter_file}
+        target_sources(${target}_scatter PRIVATE ${scatter_file}
         )
         # Cmake cannot use generator expressions in the
         # set_source_file_properties command, so instead we just parse the regex
@@ -147,12 +169,23 @@ endmacro()
 # Macro for converting the output *.axf file to finary files: bin, elf, hex
 macro(add_convert_to_bin_target target)
     get_target_property(bin_dir ${target} RUNTIME_OUTPUT_DIRECTORY)
+
     add_custom_target(${target}_bin
-        ALL DEPENDS ${target}
+        ALL SOURCES ${bin_dir}/${target}.bin
+        SOURCES ${bin_dir}/${target}.elf
+        SOURCES ${bin_dir}/${target}.hex
+    )
+
+    add_custom_command(OUTPUT ${bin_dir}/${target}.bin
+        OUTPUT ${bin_dir}/${target}.elf
+        OUTPUT ${bin_dir}/${target}.hex
+        DEPENDS ${target}
         COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${target}> ${bin_dir}/${target}.bin
         COMMAND ${CMAKE_OBJCOPY} -O elf32-littlearm $<TARGET_FILE:${target}> ${bin_dir}/${target}.elf
         COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${target}> ${bin_dir}/${target}.hex
     )
+
+    add_imported_target(${target}_hex ${target}_bin "${bin_dir}/${target}.hex")
 endmacro()
 
 # Set of macrots for sharing code between BL2 and RunTime, targeted for sharing MbedTLS library
@@ -163,9 +196,7 @@ macro(target_share_symbols target)
     endif()
 
     foreach(symbol_file ${ARGN})
-        FILE(STRINGS ${symbol_file} SYMBOLS
-            LENGTH_MINIMUM 1
-        )
+        FILE(STRINGS ${symbol_file} SYMBOLS LENGTH_MINIMUM 1)
         list(APPEND KEEP_SYMBOL_LIST ${SYMBOLS})
     endforeach()
 
@@ -173,10 +204,7 @@ macro(target_share_symbols target)
 
     # Force the target to not remove the symbols if they're unused.
     list(TRANSFORM KEEP_SYMBOL_LIST PREPEND "-Wl,--undefined=")
-    target_link_options(${target}
-        PRIVATE
-            ${KEEP_SYMBOL_LIST}
-    )
+    target_link_options(${target} PRIVATE ${KEEP_SYMBOL_LIST})
 
     list(TRANSFORM STRIP_SYMBOL_KEEP_LIST PREPEND  --keep-symbol=)
     # strip all the symbols except those proveded as arguments
@@ -216,7 +244,7 @@ endmacro()
 
 macro(target_strip_symbols target)
     set(SYMBOL_LIST "${ARGN}")
-    list(TRANSFORM SYMBOL_LIST PREPEND  --strip-symbol=)
+    list(TRANSFORM SYMBOL_LIST PREPEND --strip-symbol=)
 
     add_custom_command(
         TARGET ${target}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2022, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  * Copyright (c) 2018-2019, Laurence Lundblade.
  *
  * SPDX-License-Identifier: BSD-3-Clause
@@ -14,6 +14,7 @@
 #include "config_tfm.h"
 #include "tfm_plat_defs.h"
 #include "psa/crypto.h"
+#include "psa/service.h"
 #include "tfm_crypto_defs.h"
 
 /* Only support HMAC as MAC algorithm in COSE_Mac0 so far */
@@ -128,7 +129,7 @@ static psa_status_t attest_calc_instance_id(void)
 enum psa_attest_err_t
 attest_get_instance_id(struct q_useful_buf_c *id_buf)
 {
-    enum psa_attest_err_t err;
+    psa_status_t err;
 
     if (!id_buf) {
         return PSA_ATTEST_ERR_GENERAL;
@@ -136,7 +137,7 @@ attest_get_instance_id(struct q_useful_buf_c *id_buf)
 
     if (instance_id_len == 0U) {
         err = attest_calc_instance_id();
-        if (err != PSA_ATTEST_ERR_SUCCESS) {
+        if (err != PSA_SUCCESS) {
             return PSA_ATTEST_ERR_CLAIM_UNAVAILABLE;
         }
     }
@@ -164,15 +165,7 @@ attest_get_initial_attestation_key_id(struct q_useful_buf_c *attest_key_id)
                                                  &kid_len);
         /* In case the buffer size was not checked, although unlikely */
         if (sizeof(kid_buf) < kid_len) {
-            /*
-             * Something critical following kid_buf may be overwritten.
-             * Directly jump into fatal error handling.
-             *
-             * TODO: Should be replaced by a call to psa_panic() when it
-             * becomes available.
-             */
-            while (1) {
-                ;
+            psa_panic();
             }
         }
 

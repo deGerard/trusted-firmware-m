@@ -31,6 +31,15 @@
  * default values if needed. */
 #include "tfm_s_linker_alignments.h"
 
+{# Check whether DTCM needs to be included. #}
+{# We loop through here because break and continue are only available via the Loop Controls extension #}
+{% set outer_namespace = namespace(use_dtcm=false) %}
+{% for partition in partitions %}
+    {% if partition.manifest.place_in_dtcm %}
+        {% set outer_namespace.use_dtcm = true %}
+    {% endif %}
+{% endfor %}
+
 MEMORY
 {
     FLASH    (rx)  : ORIGIN = S_CODE_START, LENGTH = S_CODE_SIZE
@@ -38,6 +47,12 @@ MEMORY
 #ifdef S_RAM_CODE_START
     CODE_RAM (rwx) : ORIGIN = S_RAM_CODE_START, LENGTH = S_RAM_CODE_SIZE
 #endif
+#ifdef S_RUNTIME_ITCM_START
+  ITCM     (rx)  : ORIGIN = S_RUNTIME_ITCM_START, LENGTH = S_RUNTIME_ITCM_SIZE
+#endif
+{% if outer_namespace.use_dtcm %}
+    DTCM     (rw)  : ORIGIN = S_RUNTIME_DTCM_START, LENGTH = S_RUNTIME_DTCM_SIZE
+{% endif %}
 }
 
 #ifndef TFM_LINKER_VENEERS_START
@@ -175,6 +190,25 @@ SECTIONS
 {% endfor %}
     } > FLASH
 
+#ifdef S_RUNTIME_ITCM_START
+    /* Position tag: Start of SPM code (privileged) */
+    saved_location_counter = .;
+    . = ORIGIN(ITCM);
+    . = ALIGN(TFM_LINKER_SPM_CODE_ALIGNMENT);
+    Image$$PT_SPM_CODE_START$$Base = .;
+
+    .ER_SPM_CODE . :
+    {
+        *tfm_spm*:(SORT_BY_ALIGNMENT(.text*))
+        *tfm_spm*:(SORT_BY_ALIGNMENT(.rodata*))
+    } > ITCM AT > FLASH
+
+    /* Position tag: End of SPM code (privileged) */
+    . = ALIGN(TFM_LINKER_SPM_CODE_ALIGNMENT);
+    Image$$PT_SPM_CODE_END$$Base = .;
+    . = saved_location_counter;
+#endif
+
     .ARM.extab :
     {
         *(.ARM.extab* .gnu.linkonce.armextab.*)
@@ -208,6 +242,8 @@ SECTIONS
         KEEP(*(.fini_array))
         PROVIDE_HIDDEN (__fini_array_end = .);
 
+        /* Initialization of the DATA and BSS sections is implemented with 32-bit granularity.
+           Therefore, the start addresses and sizes of these sections must be aligned to 4 bytes */
         /* .copy.table */
         . = ALIGN(4);
         __copy_table_start__ = .;
@@ -215,7 +251,7 @@ SECTIONS
         /* Copy interrupt vectors from flash to RAM */
         LONG (__vectors_start__)                            /* From */
         LONG (__ram_vectors_start__)                        /* To   */
-        LONG ((__vectors_end__ - __vectors_start__) / 4)    /* Size */
+        LONG ((__vectors_end__ - __vectors_start__) / 4)    /* Size. Must be a multiple of 4 */
 #endif
         LONG (LOADADDR(.TFM_DATA))
         LONG (ADDR(.TFM_DATA))
@@ -226,6 +262,12 @@ SECTIONS
         LONG (ADDR(.ER_{{partition.manifest.name}}_DATA))
         LONG (SIZEOF(.ER_{{partition.manifest.name}}_DATA) / 4)
 {% endfor %}
+
+#ifdef S_RUNTIME_ITCM_START
+        LONG (LOADADDR(.ER_SPM_CODE))
+        LONG (ADDR(.ER_SPM_CODE))
+        LONG (SIZEOF(.ER_SPM_CODE) / 4)
+#endif
 
 #ifdef S_RAM_CODE_START
         LONG (LOADADDR(.ER_CODE_SRAM))
@@ -256,6 +298,21 @@ SECTIONS
         EXCLUDE_FILE (*libflash_drivers*:) *(SORT_BY_ALIGNMENT(.text*))
     } > FLASH
 
+#ifdef RAM_VECTORS_SUPPORT
+    CHECK_ALIGNMENT_4(__vectors_end__ - __vectors_start__)
+#endif
+    CHECK_ALIGNMENT_4(SIZEOF(.TFM_DATA))
+#ifdef S_RAM_CODE_START
+    CHECK_ALIGNMENT_4(SIZEOF(.ER_CODE_SRAM))
+#endif
+#ifdef CONFIG_TFM_PARTITION_META
+    CHECK_ALIGNMENT_4(SIZEOF(.TFM_SP_META_PTR))
+#endif
+{% for partition in partitions %}
+    CHECK_ALIGNMENT_4(SIZEOF(.ER_{{partition.manifest.name}}_DATA))
+    CHECK_ALIGNMENT_4(SIZEOF(.ER_{{partition.manifest.name}}_BSS))
+{% endfor %}
+
     /* Collect all RO-data into a single unprivileged region */
     .ER_RO_DATA ALIGN(TFM_LINKER_PT_RO_DATA_ALIGNMENT) :
     {
@@ -272,10 +329,7 @@ SECTIONS
      */
     .TFM_SP_LOAD_LIST ALIGN(4) :
     {
-        KEEP(*(.part_load_priority_00))
-        KEEP(*(.part_load_priority_01))
-        KEEP(*(.part_load_priority_02))
-        KEEP(*(.part_load_priority_03))
+        KEEP(*(.part_load))
     } > FLASH
     Image$$TFM_SP_LOAD_LIST$$RO$$Base = ADDR(.TFM_SP_LOAD_LIST);
     Image$$TFM_SP_LOAD_LIST$$RO$$Limit = ADDR(.TFM_SP_LOAD_LIST) + SIZEOF(.TFM_SP_LOAD_LIST);
@@ -299,6 +353,9 @@ SECTIONS
         *libflash_drivers*:*(SORT_BY_ALIGNMENT(.text*))
         *libflash_drivers*:*(SORT_BY_ALIGNMENT(.rodata*))
         KEEP(*(.ramfunc))
+#if defined(S_RAM_CODE_EXTRA_SECTION_NAME)
+        KEEP(*(S_RAM_CODE_EXTRA_SECTION_NAME))
+#endif
         . = ALIGN(4); /* This alignment is needed to make the section size 4 bytes aligned */
     } > CODE_RAM AT > FLASH
 
@@ -403,6 +460,7 @@ SECTIONS
     {% endif %}
         *({{partition.manifest.name}}_APP-ROT_ATTR_ZI)
         . += (. - start_of_{{partition.manifest.name}}_bss) ? 0 : 4;
+        . = ALIGN(4);
     } > RAM
 
     /* Position tag: End of Application RoT partition's private data */
@@ -466,6 +524,7 @@ SECTIONS
 #endif
 
 {% for partition in partitions %}
+    {% if not partition.manifest.place_in_dtcm %}
     {% if partition.manifest.type == 'PSA-ROT' %}
 
     .ER_{{partition.manifest.name}}_DATA : ALIGN(TFM_LINKER_PT_PROT_PART_PRIVATE_DATA_ALIGNMENT)
@@ -503,6 +562,7 @@ SECTIONS
     {% endif %}
         *({{partition.manifest.name}}_PSA-ROT_ATTR_ZI)
         . += (. - start_of_{{partition.manifest.name}}_bss) ? 0 : 4;
+        . = ALIGN(4);
     } > RAM
 
     /* Position tag: End of PSA RoT partition's private data */
@@ -510,7 +570,67 @@ SECTIONS
     Image$$PT_{{partition.manifest.name}}_PRIVATE_DATA_END$$Base = .;
 
     {% endif %}
+    {% endif %}
 {% endfor %}
+
+{% if outer_namespace.use_dtcm %}
+    saved_location_counter = .;
+    . = ORIGIN(DTCM);
+{% endif %}
+
+{% for partition in partitions %}
+    {% if partition.manifest.place_in_dtcm %}
+    {% if partition.manifest.type == 'PSA-ROT' %}
+
+    .ER_{{partition.manifest.name}}_DATA : ALIGN(TFM_LINKER_PT_PROT_PART_PRIVATE_DATA_ALIGNMENT)
+    {
+        /* Position tag: Start of PSA RoT partition's private data */
+        Image$$PT_{{partition.manifest.name}}_PRIVATE_DATA_START$$Base = .;
+    {% if partition.attr.linker_pattern.library_list %}
+        {% for pattern in partition.attr.linker_pattern.library_list %}
+        {{pattern}}:*(SORT_BY_ALIGNMENT(.data*))
+        {% endfor %}
+    {% endif %}
+    {% if partition.attr.linker_pattern.object_list %}
+        {% for pattern in partition.attr.linker_pattern.object_list %}
+        {{pattern}}(SORT_BY_ALIGNMENT(.data*))
+        {% endfor %}
+    {% endif %}
+        *({{partition.manifest.name}}_PSA-ROT_ATTR_RW)
+        . = ALIGN(4);
+    } > DTCM AT > FLASH
+
+    .ER_{{partition.manifest.name}}_BSS ALIGN(8) (NOLOAD) :
+    {
+        start_of_{{partition.manifest.name}}_bss = .;
+    {% if partition.attr.linker_pattern.library_list %}
+        {% for pattern in partition.attr.linker_pattern.library_list %}
+        {{pattern}}:*(SORT_BY_ALIGNMENT(.bss*))
+        {{pattern}}:*(COMMON)
+        {% endfor %}
+    {% endif %}
+    {% if partition.attr.linker_pattern.object_list %}
+        {% for pattern in partition.attr.linker_pattern.object_list %}
+        {{pattern}}(SORT_BY_ALIGNMENT(.bss*))
+        {{pattern}}(COMMON)
+        {% endfor %}
+    {% endif %}
+        *({{partition.manifest.name}}_PSA-ROT_ATTR_ZI)
+        . += (. - start_of_{{partition.manifest.name}}_bss) ? 0 : 4;
+        . = ALIGN(4);
+    } > DTCM
+
+    /* Position tag: End of PSA RoT partition's private data */
+    . = ALIGN(TFM_LINKER_PT_PROT_PART_PRIVATE_DATA_ALIGNMENT);
+    Image$$PT_{{partition.manifest.name}}_PRIVATE_DATA_END$$Base = .;
+
+    {% endif %}
+    {% endif %}
+{% endfor %}
+
+{% if outer_namespace.use_dtcm %}
+    . = saved_location_counter;
+{% endif %}
 
     .TFM_DATA ALIGN(8) :
     {
@@ -524,19 +644,13 @@ SECTIONS
     {
         /* The runtime partition placed order is same as load partition */
         __partition_runtime_start__ = .;
-        KEEP(*(.bss.part_runtime_priority_00))
-        KEEP(*(.bss.part_runtime_priority_01))
-        KEEP(*(.bss.part_runtime_priority_02))
-        KEEP(*(.bss.part_runtime_priority_03))
+        KEEP(*(.bss.part_runtime))
         __partition_runtime_end__ = .;
         . = ALIGN(4);
 
         /* The runtime service placed order is same as load partition */
         __service_runtime_start__ = .;
-        KEEP(*(.bss.serv_runtime_priority_00))
-        KEEP(*(.bss.serv_runtime_priority_01))
-        KEEP(*(.bss.serv_runtime_priority_02))
-        KEEP(*(.bss.serv_runtime_priority_03))
+        KEEP(*(.bss.serv_runtime))
         __service_runtime_end__ = .;
         *(SORT_BY_ALIGNMENT(.bss*))
         *(COMMON)

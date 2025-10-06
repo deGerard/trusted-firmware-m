@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2024 Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  * Copyright (c) 2023 Cypress Semiconductor Corporation (an Infineon
  * company) or an affiliate of Cypress Semiconductor Corporation. All rights
  * reserved.
@@ -32,14 +32,17 @@
 /* Throw out bus error when an access causes security violation */
 #define CMSDK_SECRESPCFG_BUS_ERR_MASK   (1UL)
 
+#ifdef TFM_LOAD_NS_IMAGE
 /* The section names come from the scatter file */
 REGION_DECLARE(Load$$LR$$, LR_NS_PARTITION, $$Base);
+#endif
 #ifdef CONFIG_TFM_USE_TRUSTZONE
 REGION_DECLARE(Image$$, ER_VENEER, $$Base);
 REGION_DECLARE(Image$$, VENEER_ALIGN, $$Limit);
 #endif
 
 const struct memory_region_limits memory_regions = {
+#ifdef TFM_LOAD_NS_IMAGE
 #ifdef RSE_XIP
     .non_secure_code_start = RSE_RUNTIME_NS_XIP_BASE_NS,
 
@@ -59,6 +62,7 @@ const struct memory_region_limits memory_regions = {
         (uint32_t)&REGION_NAME(Load$$LR$$, LR_NS_PARTITION, $$Base) +
         NS_PARTITION_SIZE - 1,
 #endif /* RSE_XIP */
+#endif /* TFM_LOAD_NS_IMAGE */
 
 #ifdef CONFIG_TFM_USE_TRUSTZONE
     .veneer_base = (uint32_t)&REGION_NAME(Image$$, ER_VENEER, $$Base),
@@ -107,9 +111,11 @@ extern ARM_DRIVER_MPC Driver_VM0_MPC;
 extern ARM_DRIVER_MPC Driver_VM1_MPC;
 extern ARM_DRIVER_MPC Driver_SIC_MPC;
 
+#ifdef TFM_LOAD_NS_IMAGE
 /* Define Peripherals NS address range for the platform */
 #define PERIPHERALS_BASE_NS_START      (0x40000000)
 #define PERIPHERALS_BASE_NS_END        (0x4FFFFFFF)
+#endif /* TFM_LOAD_NS_IMAGE */
 
 /* Enable system reset request for CPU 0 */
 #define ENABLE_CPU0_SYSTEM_RESET_REQUEST (1U << 8U)
@@ -297,6 +303,7 @@ void sau_and_idau_cfg(void)
     /* Enables SAU */
     TZ_SAU_Enable();
 
+#ifdef TFM_LOAD_NS_IMAGE
     /* Configures SAU regions to be non-secure */
     SAU->RNR  = 0;
     SAU->RBAR = (memory_regions.non_secure_partition_base
@@ -336,6 +343,7 @@ void sau_and_idau_cfg(void)
 #else
     sacfg->nsccfg |= RAMNSC;
 #endif
+#endif /* TFM_LOAD_NS_IMAGE */
 
     /* Configure MSC to enable secure accesses for the DMA */
     sacfg->nsmscexp = 0x0;
@@ -346,6 +354,46 @@ void sau_and_idau_cfg(void)
 
     /* Lock down SAU registers to prevent further changes */
     secctrl->cpuseccfg |= CPUSECCFG_LOCKSAU_POS_MASK;
+}
+
+static int32_t init_mpc_region_for_required_vms(uintptr_t base, uintptr_t limit,
+                                                enum _ARM_MPC_SEC_ATTR attr)
+{
+    int32_t ret = ARM_DRIVER_OK;
+    const bool is_ns = (attr == ARM_MPC_ATTR_NONSECURE);
+    const uintptr_t vm1_base = is_ns ? VM1_BASE_NS : VM1_BASE_S;
+
+    /* Force the addresses to be S ones */
+    if (is_ns) {
+        if ((base & 0x10000000) != 0 || (limit & 0x10000000) != 0) {
+            return ARM_DRIVER_ERROR_PARAMETER;
+        }
+    } else {
+        if ((base & 0x10000000) == 0 || (limit & 0x10000000) == 0) {
+            return ARM_DRIVER_ERROR_PARAMETER;
+        }
+    }
+
+    const uintptr_t vm0_start = base < vm1_base ? base : 0;
+    const uintptr_t vm0_end   = limit < vm1_base ? limit : vm1_base - 1;
+    const uintptr_t vm1_start = base < vm1_base ? vm1_base : base;
+    const uintptr_t vm1_end   = limit < vm1_base ? 0 : limit;
+
+    if (vm0_start != 0) {
+        ret = Driver_VM0_MPC.ConfigRegion(vm0_start, vm0_end, attr);
+        if (ret != ARM_DRIVER_OK) {
+            return ret;
+        }
+    }
+
+    if (vm1_end != 0) {
+        ret = Driver_VM1_MPC.ConfigRegion(vm1_start, vm1_end, attr);
+        if (ret != ARM_DRIVER_OK) {
+            return ret;
+        }
+    }
+
+    return ret;
 }
 
 /*------------------- Memory configuration functions -------------------------*/
@@ -375,29 +423,25 @@ enum tfm_plat_err_t mpc_init_cfg(void)
     }
 #endif /* RSE_XIP */
 
-    /* Configuring primary non-secure partition.
-     * It is ensured in flash_layout.h that these memory regions are located in
-     * VM1 SRAM device. */
-
-    ret = Driver_VM1_MPC.ConfigRegion(NS_DATA_START,
-                                      NS_DATA_LIMIT,
-                                      ARM_MPC_ATTR_NONSECURE);
-    if (ret != ARM_DRIVER_OK) {
-        return TFM_PLAT_ERR_SYSTEM_ERR;
-    }
+#ifdef TFM_LOAD_NS_IMAGE
+    /* Configuring NS Data. It might be in VM0, VM1 or in spanning both. */
+    ret = init_mpc_region_for_required_vms(NS_DATA_START, NS_DATA_LIMIT,
+                                           ARM_MPC_ATTR_NONSECURE);
 
 #ifdef RSE_XIP
     ret = Driver_SIC_MPC.ConfigRegion(memory_regions.non_secure_partition_base,
                                       memory_regions.non_secure_partition_limit,
                                       ARM_MPC_ATTR_NONSECURE);
 #else
-    ret = Driver_VM1_MPC.ConfigRegion(memory_regions.non_secure_partition_base,
-                                      memory_regions.non_secure_partition_limit,
-                                      ARM_MPC_ATTR_NONSECURE);
+    /* Configuring NS Code. It might be in VM0, VM1 or in spanning both. */
+    ret = init_mpc_region_for_required_vms(memory_regions.non_secure_partition_base,
+                                           memory_regions.non_secure_partition_limit,
+                                           ARM_MPC_ATTR_NONSECURE);
 #endif /* !RSE_XIP */
     if (ret != ARM_DRIVER_OK) {
         return TFM_PLAT_ERR_SYSTEM_ERR;
     }
+#endif /* TFM_LOAD_NS_IMAGE */
 
     /* Lock down the MPC configuration */
     ret = Driver_VM0_MPC.LockDown();

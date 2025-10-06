@@ -8,19 +8,15 @@
 #ifndef __RSE_PROVISIONING_MESSAGE_HANDLER_H__
 #define __RSE_PROVISIONING_MESSAGE_HANDLER_H__
 
-#include "rse_provisioning_message.h"
-#include "tfm_plat_defs.h"
-#include "rse_kmu_slot_ids.h"
-
+#include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
+
+#include "rse_provisioning_message.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-typedef enum tfm_plat_err_t (*setup_aes_key_func_t)(const struct rse_provisioning_message_blob_t *, uint32_t *);
-typedef enum tfm_plat_err_t (*get_rotpk_func_t)(const struct rse_provisioning_message_blob_t *,
-                             uint32_t **, size_t *, uint32_t **, size_t *);
 
 enum provisioning_message_status_t {
     PROVISIONING_STATUS_SUCCESS_CONTINUE = 0x1,
@@ -40,6 +36,10 @@ enum provisioning_message_report_step_t {
     PROVISIONING_REPORT_STEP_MANDATORY_CM_PROVISIONING = 0x55556666,
     PROVISIONING_REPORT_STEP_MANDATORY_EARLY_DM_PROVISIONING = 0x66667777,
     PROVISIONING_REPORT_STEP_OTHER_BLOB_DONE = 0x77778888,
+    PROVISIONING_REPORT_STEP_PARSE_PLAIN_DATA = 0x88889999,
+    PROVISIONING_REPORT_STEP_UPDATE_ROTPKS = 0x9999AAAA,
+    PROVISIONING_REPORT_STEP_GENERATE_CERTIFICATE = 0xBBBBAAAA,
+    PROVISIONING_REPORT_STEP_VERIFY_CERTIFICATE = 0xCCCCAAAA,
     PROVISIONING_REPORT_STEP_FORCE_UINT_SIZE = UINT32_MAX,
 };
 
@@ -49,15 +49,6 @@ struct provisioning_message_status_report_t {
     uint32_t error_code;
     uint32_t reserved;
 };
-
-struct default_blob_handler_ctx_t {
-    setup_aes_key_func_t setup_aes_key;
-    get_rotpk_func_t get_rotpk;
-    bool blob_is_chainloaded;
-};
-
-enum tfm_plat_err_t default_blob_handler(const struct rse_provisioning_message_blob_t *blob,
-                                         size_t msg_size, const void *ctx);
 
 struct provisioning_message_handler_config {
     enum tfm_plat_err_t (*blob_handler)(const struct rse_provisioning_message_blob_t *, size_t, const void *);
@@ -69,12 +60,22 @@ enum tfm_plat_err_t handle_provisioning_message(const struct rse_provisioning_me
                                                 struct provisioning_message_handler_config *config, void *ctx);
 
 enum tfm_plat_err_t
-blob_handling_status_report_continue(enum provisioning_message_report_step_t step);
+message_handling_status_report_continue(enum provisioning_message_report_step_t step);
 
-enum tfm_plat_err_t blob_handling_status_report_error(enum provisioning_message_report_step_t step,
-                                                      uint32_t error);
+enum tfm_plat_err_t
+message_handling_status_report_error(enum provisioning_message_report_step_t step, uint32_t error);
 
-enum tfm_plat_err_t blob_provisioning_finished(void);
+enum tfm_plat_err_t message_provisioning_finished(enum provisioning_message_report_step_t step);
+
+static inline bool
+rse_provisioning_message_is_valid(const struct rse_provisioning_message_t *message)
+{
+    const enum rse_provisioning_message_type_t msg_type = message->header.type;
+
+    return (msg_type == RSE_PROVISIONING_MESSAGE_TYPE_BLOB) ||
+           (msg_type == RSE_PROVISIONING_MESSAGE_TYPE_CERTIFICATE) ||
+           (msg_type == RSE_PROVISIONING_MESSAGE_TYPE_PLAIN_DATA);
+}
 
 #ifdef __cplusplus
 }

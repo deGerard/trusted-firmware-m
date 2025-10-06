@@ -13,15 +13,15 @@
 #include "boot_hal.h"
 #include "Driver_Flash.h"
 #include "flash_layout.h"
-#ifdef CRYPTO_HW_ACCELERATOR
-#include "crypto_hw.h"
-#endif /* CRYPTO_HW_ACCELERATOR */
 #include "fih.h"
 #ifdef TFM_MEASURED_BOOT_API
 #include "region_defs.h"
 #include "tfm_boot_status.h"
-#include "boot_measurement.h"
+#include "tfm_boot_measurement.h"
 #endif /* TFM_MEASURED_BOOT_API */
+#if defined(MCUBOOT_USE_PSA_CRYPTO)
+#include "psa/crypto.h"
+#endif /* MCUBOOT_USE_PSA_CRYPTO */
 
 /* Flash device names must be specified by target */
 #ifdef FLASH_DEV_NAME
@@ -161,16 +161,7 @@ __WEAK int32_t boot_platform_init(void)
 
 __WEAK int32_t boot_platform_post_init(void)
 {
-#ifdef CRYPTO_HW_ACCELERATOR
-    int32_t result;
-
-    result = crypto_hw_accelerator_init();
-    if (result) {
-        return 1;
-    }
-
     fih_delay_init();
-#endif /* CRYPTO_HW_ACCELERATOR */
 
     return 0;
 }
@@ -185,12 +176,9 @@ __WEAK void boot_platform_start_next_image(struct boot_arm_vector_table *vt)
     static struct boot_arm_vector_table *vt_cpy;
     int32_t result;
 
-#ifdef CRYPTO_HW_ACCELERATOR
-    result = crypto_hw_accelerator_finish();
-    if (result) {
-        while (1){}
-    }
-#endif /* CRYPTO_HW_ACCELERATOR */
+#if defined(MCUBOOT_USE_PSA_CRYPTO)
+    mbedtls_psa_crypto_free();
+#endif /* MCUBOOT_USE_PSA_CRYPTO */
 
 #ifdef FLASH_DEV_NAME
     result = FLASH_DEV_NAME.Uninitialize();
@@ -278,12 +266,12 @@ static int boot_add_data_to_shared_area(uint8_t        major_type,
         (boot_data->header.tlv_tot_len > data_size)) {
         memset((void *)data_base, 0, data_size);
         boot_data->header.tlv_magic   = SHARED_DATA_TLV_INFO_MAGIC;
-        boot_data->header.tlv_tot_len = data_size;
+        boot_data->header.tlv_tot_len = SHARED_DATA_HEADER_SIZE;
     }
 
     /* Get the boundaries of TLV section. */
     tlv_end = data_base + boot_data->header.tlv_tot_len;
-    offset = data_base + data_size;
+    offset = data_base + SHARED_DATA_HEADER_SIZE;
 
     /* Check whether TLV entry is already added. Iterates over the TLV section
      * looks for the same entry if found then returns with error.

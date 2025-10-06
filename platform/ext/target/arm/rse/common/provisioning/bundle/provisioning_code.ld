@@ -29,25 +29,26 @@ MEMORY
     VALUES (r) : ORIGIN = PROVISIONING_BUNDLE_VALUES_START, LENGTH = PROVISIONING_BUNDLE_VALUES_SIZE
 }
 
-ENTRY(do_provisioning)
+ENTRY(do_provision)
 
 SECTIONS
 {
     CODE :
     {
         *_provisioning_code.o(DO_PROVISION)
-        *(EXCLUDE_FILE (*_provisioning_data.o) .rodata*)
+        *(.rodata*)
         *(.text*)
     } > CODE
 
     DATA :
     {
-        *(COMMON .data* .bss*)
+        *(.data*)
+        *(.bss*)
+        *(COMMON)
+        /* Non secret provisioning values placed directly after data
+         * so ensure 4 byte aligned */
+        . = ALIGN(4);
     } > DATA
 
-    VALUES :
-    {
-        *_provisioning_data.o(.rodata.data)
-    } > VALUES
-
+    Image$$DATA$$Limit = ADDR(DATA) + SIZEOF(DATA);
 }

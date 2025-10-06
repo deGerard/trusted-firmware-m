@@ -9,6 +9,10 @@
 # to CMakeLists.txt. It instructs how to build a platform on non-secure side.
 # The structure and sources list are fully platform specific.
 
+if (NOT TFM_LOAD_NS_IMAGE)
+    message(FATAL_ERR "NS image cannot be built with TFM_LOAD_NS_IMAGE=OFF")
+endif()
+
 add_library(platform_ns)
 
 target_sources(platform_ns
@@ -53,8 +57,8 @@ target_compile_definitions(platform_region_defs
         $<$<BOOL:${PLATFORM_ERROR_CODES}>:PLATFORM_ERROR_CODES>
         $<$<BOOL:${RSE_ENABLE_BRINGUP_HELPERS}>:RSE_ENABLE_BRINGUP_HELPERS>
         $<$<BOOL:${RSE_OTP_TRNG}>:RSE_OTP_TRNG>
-        $<$<BOOL:${RSE_ENABLE_TRAM}>:RSE_ENABLE_TRAM>
         $<$<BOOL:${PLAT_MHU_VERSION}>:PLAT_MHU_VERSION=${PLAT_MHU_VERSION}>
+        TFM_LOAD_NS_IMAGE
         TFM_UNIQUE_ERROR_CODES=1
 )
 
@@ -76,12 +80,10 @@ if (RSE_XIP)
 
     add_custom_command(OUTPUT ${NS_TARGET_NAME}_sic_tables.bin
         OUTPUT ${NS_TARGET_NAME}_encrypted.bin
-        DEPENDS $<TARGET_FILE_DIR:${NS_TARGET_NAME}>/${NS_TARGET_NAME}.bin
         DEPENDS ${NS_TARGET_NAME}_bin
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../image_signing/scripts/create_xip_tables.py
             --input_image $<TARGET_FILE_DIR:${NS_TARGET_NAME}>/${NS_TARGET_NAME}.bin
-            --encrypt_key_file ${CMAKE_CURRENT_SOURCE_DIR}/../image_signing/scripts/kce_dm_dummy_encryption_key.bin
-            --bl1_2_hash ${CONFIG_SPE_PATH}/bin/bl1_2_padded_hash.bin
+            --encrypt_key_file ${CMAKE_CURRENT_SOURCE_DIR}/../image_signing/scripts/dummy_guk.bin
             --table_output_file ${NS_TARGET_NAME}_sic_tables.bin
             --encrypted_image_output_file ${NS_TARGET_NAME}_encrypted.bin
             --image_version ${MCUBOOT_SECURITY_COUNTER_NS}
@@ -116,7 +118,7 @@ if (RSE_XIP)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../image_signing/scripts
 
         #Sign non-secure binary image with provided secret key
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../image_signing/scripts/wrapper/wrapper.py
+        COMMAND mcuboot_imagesign_wrapper
             -v ${MCUBOOT_IMAGE_VERSION_NS}
             --layout $<TARGET_OBJECTS:signing_layout_ns>
             --key ${CMAKE_CURRENT_SOURCE_DIR}/../image_signing/keys/image_ns_signing_private_key.pem
@@ -133,7 +135,7 @@ if (RSE_XIP)
             $<$<BOOL:${MCUBOOT_MEASURED_BOOT}>:--measured-boot-record>
             ${CMAKE_BINARY_DIR}/bin/${NS_TARGET_NAME}_sic_tables.bin
             $<$<STREQUAL:${MCUBOOT_UPGRADE_STRATEGY},OVERWRITE_ONLY>:--overwrite-only>
-            $<$<BOOL:${MCUBOOT_ENC_IMAGES}>:-E${MCUBOOT_KEY_ENC}>
+            $<$<BOOL:${MCUBOOT_ENC_IMAGES}>:-E${MCUBOOT_KEY_ENC_NS}>
             $<$<BOOL:${MCUBOOT_MEASURED_BOOT}>:--measured-boot-record>
             ${CMAKE_CURRENT_BINARY_DIR}/${NS_TARGET_NAME}_sic_tables_signed.bin
         COMMAND ${CMAKE_COMMAND} -E copy

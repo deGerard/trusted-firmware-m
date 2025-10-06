@@ -16,23 +16,17 @@
 #include "region_defs.h"
 #include "runtime_shared_data.h"
 #include "soft_crc.h"
+#include "tfm_hal_platform.h"
 
 #ifdef PLATFORM_PSA_ADAC_SECURE_DEBUG
 static bool read_saved_debug_state(void)
 {
-    uint32_t reg_value;
-    struct rse_sysctrl_t *sysctrl = (struct rse_sysctrl_t *)RSE_SYSCTRL_BASE_S;
-
-    reg_value = sysctrl->reset_syndrome;
-
-    return (reg_value & (1 << SWSYN_DEBUG_STATE_IN_BOOT_BIT_POS));
+    return (tfm_hal_get_reset_syndrome() & RSE_SWSYN_ENTER_DEBUG_MASK);
 }
 
 static void clear_debug_state(void)
 {
-    struct rse_sysctrl_t *sysctrl = (struct rse_sysctrl_t *)RSE_SYSCTRL_BASE_S;
-
-    sysctrl->reset_syndrome &= ~(1 << SWSYN_DEBUG_STATE_IN_BOOT_BIT_POS);
+    tfm_hal_clear_reset_syndrome_bit(RSE_SWSYN_DEBUG_STATE_IN_BOOT_BIT_POS);
 }
 
 static int get_permissions_mask_from_shared_sram_area(uint8_t *permissions_mask,
@@ -53,22 +47,6 @@ static int32_t tfm_plat_apply_debug_permissions(uint8_t *permissions_mask)
     return lcm_dcu_set_enabled(&LCM_DEV_S, permissions_mask);
 }
 #endif /* PLATFORM_PSA_ADAC_SECURE_DEBUG */
-
-static int32_t tfm_plat_lock_rse_debug(void)
-{
-    enum lcm_error_t lcm_err;
-    uint32_t dcu_lock_reg_val[LCM_DCU_WIDTH_IN_BYTES / sizeof(uint32_t)];
-
-    lcm_err = lcm_dcu_get_locked(&LCM_DEV_S, (uint8_t *)dcu_lock_reg_val);
-    if (lcm_err != LCM_ERROR_NONE) {
-        return -1;
-    }
-
-    /* 32 Least significant (First word) LCM dcu_en signals are assigned for RSE */
-    dcu_lock_reg_val[0] = PLAT_RSE_DCU_LOCK0_VALUE;
-
-    return lcm_dcu_set_locked(&LCM_DEV_S, (uint8_t*)dcu_lock_reg_val);
-}
 
 int32_t b1_1_platform_debug_init(void)
 {
@@ -98,8 +76,6 @@ int32_t b1_1_platform_debug_init(void)
         }
     }
 #endif /* PLATFORM_PSA_ADAC_SECURE_DEBUG */
-
-    /* Lock RSE Debug */
-    return tfm_plat_lock_rse_debug();
+    return 0;
 }
 

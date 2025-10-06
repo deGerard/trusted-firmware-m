@@ -115,13 +115,15 @@ target_include_directories(platform_s
         ${PLATFORM_DIR}/ext/target/arm/drivers/usart/pl011
     INTERFACE
         cc312
-        fw_update_agent
+        bootloader
         soft_crc
         io
         partition
 )
 
 target_sources(platform_s
+    INTERFACE
+        $<$<STREQUAL:"${TFM_FIH_PROFILE}","HIGH">:${PLATFORM_DIR}/ext/common/template/tfm_fih_platform.c>
     PRIVATE
         CMSIS_Driver/Driver_Flash.c
         CMSIS_Driver/Driver_USART.c
@@ -133,9 +135,8 @@ target_sources(platform_s
         Native_Driver/watchdog.c
         Native_Driver/arm_watchdog_drv.c
         $<$<BOOL:TFM_PARTITION_PLATFORM>:${CMAKE_CURRENT_SOURCE_DIR}/services/src/tfm_platform_system.c>
-        fw_update_agent/uefi_capsule_parser.c
-        fw_update_agent/fwu_agent.c
-        fw_update_agent/uefi_fmp.c
+        bootloader/mcuboot/tfm_mcuboot_fwu.c
+        bootloader/mcuboot/uefi_fmp.c
         soft_crc/soft_crc.c
         io/io_block.c
         io/io_flash.c
@@ -146,6 +147,7 @@ target_sources(platform_s
         rse_comms_permissions_hal.c
         mem_check_v6m_v7m_hal.c
         ${PLATFORM_DIR}/ext/common/mem_check_v6m_v7m.c
+	 platform.c
 )
 
 if (PLATFORM_IS_FVP)
@@ -198,13 +200,12 @@ target_sources(platform_bl1_1
         ./Native_Driver/watchdog.c
         ./bl1/boot_hal_bl1_1.c
         ./bl1/provisioning.c
-        ./fw_update_agent/fwu_agent.c
-        ./fw_update_agent/uefi_capsule_parser.c
-        ./fw_update_agent/uefi_fmp.c
+        ./bootloader/mcuboot/tfm_mcuboot_fwu.c
+        ./bootloader/mcuboot/uefi_fmp.c
         ./soft_crc/soft_crc.c
         $<$<NOT:$<BOOL:${PLATFORM_DEFAULT_OTP}>>:${PLATFORM_DIR}/ext/accelerator/cc312/otp_cc312.c>
         $<$<NOT:$<BOOL:${TFM_BL1_SOFTWARE_CRYPTO}>>:${CMAKE_CURRENT_SOURCE_DIR}/bl1/cc312_rom_crypto.c>
-        $<$<NOT:$<BOOL:${TFM_BL1_SOFTWARE_CRYPTO}>>:${CMAKE_CURRENT_SOURCE_DIR}/bl1/cc312_rom_trng.c>
+        $<$<NOT:$<BOOL:${TFM_BL1_SOFTWARE_CRYPTO}>>:${CMAKE_CURRENT_SOURCE_DIR}/bl1/cc312_rom_random.c>
 )
 
 target_compile_definitions(platform_bl1_1
@@ -215,6 +216,12 @@ target_compile_definitions(platform_bl1_1
         $<$<BOOL:${CRYPTO_HW_ACCELERATOR_OTP_PROVISIONING}>:CRYPTO_HW_ACCELERATOR_OTP_PROVISIONING>
         MBEDTLS_CONFIG_FILE="${CMAKE_SOURCE_DIR}/lib/ext/mbedcrypto/mbedcrypto_config/tfm_mbedcrypto_config_default.h"
         MBEDTLS_PSA_CRYPTO_CONFIG_FILE="${CMAKE_SOURCE_DIR}/lib/ext/mbedcrypto/mbedcrypto_config/crypto_config_default.h"
+
+        # This definition is only added to the bl1_main target. There are
+        # files that are shared between the BL1 and TFM_S targets. This flag
+        # can be used if the BL1 target needs different implementation than
+        # the TFM_S target.
+        BL1_BUILD
 )
 
 target_include_directories(platform_bl1_1_interface
@@ -224,7 +231,7 @@ target_include_directories(platform_bl1_1_interface
         ./Device/Config
         ./Native_Driver
         ./CMSIS_Driver/Config
-        ./fw_update_agent
+        ./bootloader
         ./soft_crc
         ${PLATFORM_DIR}/ext/target/arm/drivers/flash/cfi
         ${PLATFORM_DIR}/ext/target/arm/drivers/flash/common
@@ -236,11 +243,17 @@ target_include_directories(platform_bl1_1_interface
         ${PLATFORM_DIR}/ext/target/arm/drivers/usart/pl011
         $<$<BOOL:${CRYPTO_HW_ACCELERATOR}>:${CMAKE_SOURCE_DIR}/platform/ext/accelerator/interface>
         ${PLATFORM_DIR}/ext/accelerator/cc312/
+	${CMAKE_SOURCE_DIR}/lib/fih/inc/
 )
 
 target_link_libraries(platform_bl1_1
     PRIVATE
         $<$<NOT:$<BOOL:${TFM_BL1_SOFTWARE_CRYPTO}>>:cc3xx>
+)
+
+target_include_directories(platform_bl1_1
+    PRIVATE
+    ${CMAKE_SOURCE_DIR}/interface/include # for psa/error.h
 )
 
 target_sources(platform_bl1_2
@@ -268,7 +281,7 @@ target_include_directories(platform_bl1_2
         ./Device/Config
         ./Native_Driver
         ./CMSIS_Driver/Config
-        ./fw_update_agent
+        ./bootloader
         ./soft_crc
         ${PLATFORM_DIR}/ext/target/arm/drivers/flash/common
         ${PLATFORM_DIR}/ext/target/arm/drivers/flash/cfi
@@ -277,6 +290,7 @@ target_include_directories(platform_bl1_2
         ${PLATFORM_DIR}/ext/target/arm/drivers/flash/n25q256a/
         ${PLATFORM_DIR}/ext/target/arm/drivers/flash/sst26vf064b/
         ${PLATFORM_DIR}/ext/accelerator/cc312/
+	${CMAKE_SOURCE_DIR}/interface/include # for psa/error.h
 )
 
 #========================= Platform BL2 =======================================#
@@ -293,7 +307,7 @@ target_sources(platform_bl2
         Native_Driver/watchdog.c
         Native_Driver/arm_watchdog_drv.c
         fip_parser/fip_parser.c
-        fw_update_agent/fwu_agent.c
+        bootloader/mcuboot/tfm_mcuboot_fwu.c
         bl2/security_cnt_bl2.c
         $<$<NOT:$<BOOL:${PLATFORM_DEFAULT_OTP}>>:${PLATFORM_DIR}/ext/accelerator/cc312/otp_cc312.c>
         io/io_block.c
@@ -339,7 +353,7 @@ target_sources(bl2
 
 target_link_libraries(bl2
     PRIVATE
-        $<$<BOOL:${PLATFORM_PSA_ADAC_SECURE_DEBUG}>:trusted-firmware-m-psa-adac>
+        $<$<AND:$<BOOL:${PLATFORM_PSA_ADAC_SECURE_DEBUG}>,$<NOT:$<BOOL:${PSA_ADAC_AS_TFM_RUNTIME_SERVICE}>>>:trusted-firmware-m-psa-adac>
 )
 
 target_compile_definitions(bl2
@@ -348,6 +362,12 @@ target_compile_definitions(bl2
         $<$<BOOL:${CRYPTO_HW_ACCELERATOR_OTP_PROVISIONING}>:CRYPTO_HW_ACCELERATOR_OTP_PROVISIONING>
         $<$<BOOL:${PLATFORM_PSA_ADAC_SECURE_DEBUG}>:PLATFORM_PSA_ADAC_SECURE_DEBUG>
 )
+
+target_include_directories(bl2
+    PRIVATE
+       ${CMAKE_SOURCE_DIR}/interface/include # for psa/error.h
+)
+
 target_compile_definitions(bootutil
     PRIVATE
         MULTIPLE_EXECUTABLE_RAM_REGIONS
@@ -359,7 +379,7 @@ target_include_directories(platform_bl2
         Device/Include
         fip_parser
         Native_Driver
-        fw_update_agent
+        bootloader
         soft_crc
         io
         ${PLATFORM_DIR}/ext/target/arm/drivers/flash/common
@@ -378,6 +398,7 @@ target_include_directories(platform_bl2
         ${MCUBOOT_PATH}/boot/bootutil/include # for fault_injection_hardening.h only
         ${CMAKE_BINARY_DIR}/bl2/ext/mcuboot # for mcuboot_config.h only
         $<BUILD_INTERFACE:${BL2_SOURCE}/ext/mcuboot/include>
+	${CMAKE_SOURCE_DIR}/interface/include # for psa/error.h
 )
 
 #========================= ns_agent_mailbox ===================================#
@@ -405,7 +426,7 @@ target_sources(tfm_spm
 
 #========================= tfm_adac ============================================#
 
-if (${PLATFORM_PSA_ADAC_SECURE_DEBUG})
+if (${PLATFORM_PSA_ADAC_SECURE_DEBUG} AND NOT ${PSA_ADAC_AS_TFM_RUNTIME_SERVICE})
     target_compile_definitions(platform_bl2
         PRIVATE
             PLATFORM_PSA_ADAC_SECURE_DEBUG
@@ -415,7 +436,6 @@ if (${PLATFORM_PSA_ADAC_SECURE_DEBUG})
         PRIVATE
             trusted-firmware-m-psa-adac
     )
-
 endif()
 
 
@@ -432,8 +452,7 @@ add_custom_command(OUTPUT bl1_provisioning_bundle.bin
     DEPENDS $<TARGET_FILE_DIR:bl1_2>/bl1_2_padded_hash.bin
     DEPENDS $<TARGET_FILE_DIR:bl1_2>/bl1_2_padded.bin
     bl1_2_padded_bin bl2_signed_bin
-    DEPENDS ${CMAKE_SOURCE_DIR}/bl1/bl1_1/scripts/create_provisioning_bundle.py
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/bl1/bl1_1/scripts/create_provisioning_bundle.py
+    COMMAND bl1_1_create_provisioning_bundle
                     --bl2_encryption_key_input_file ${TFM_BL2_ENCRYPTION_KEY_PATH}
                     --bl2_signing_key_input_file ${TFM_BL1_2_CM_SIGNING_KEY_PATH}
                     --guk_input_file ${TFM_GUK_PATH}

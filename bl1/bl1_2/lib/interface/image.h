@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-#define BL2_HEADER_SIZE (offsetof(struct bl1_2_image_t, protected_values.encrypted_data.data))
+#define BL1_2_HEADER_SIZE (offsetof(struct bl1_2_image_t, protected_values.encrypted_data.data))
 
 /**
  *
@@ -35,7 +35,27 @@ uint32_t bl1_image_get_flash_offset(uint32_t image_id);
  * @param out
  * @return fih_int
  */
-fih_int bl1_image_copy_to_sram(uint32_t image_id, uint8_t *out);
+fih_ret bl1_image_copy_to_sram(uint32_t image_id, uint8_t *out);
+
+/**
+ * @brief BL1_2 selects the active BL2 image
+ *
+ * @note This function must call FIH_PANIC if no active image is available.
+ *       It must NOT return an invalid image index.
+ *
+ * @return The active image index in fih_init type
+ */
+fih_int bl1_2_select_image(void);
+
+/**
+ * @brief BL1_2 rolls back to the previous BL2 image
+ *
+ * @note This function must call FIH_PANIC if it failed to roll back images.
+ *       It must NOT return an invalid image index.
+ *
+ * @return The image index in fih_init type
+ */
+fih_int bl1_2_rollback_image(void);
 
 #ifdef __cplusplus
 }

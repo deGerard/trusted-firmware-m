@@ -33,6 +33,7 @@
 #include CC3XX_PSA_API_CONFIG_FILE
 #endif
 #include "cc3xx_rng.h"
+#include "cc3xx_opaque_keys.h"
 
 #if defined(PSA_WANT_KEY_TYPE_AES)
 /**
@@ -55,9 +56,21 @@ static psa_status_t cc3xx_internal_aes_setup(
     psa_algorithm_t alg,
     psa_encrypt_or_decrypt_t dir)
 {
-    psa_algorithm_t default_alg = PSA_ALG_AEAD_WITH_DEFAULT_LENGTH_TAG(alg);
+    const psa_algorithm_t default_alg = PSA_ALG_AEAD_WITH_DEFAULT_LENGTH_TAG(alg);
     cc3xx_aes_keysize_t key_size;
     cc3xx_aes_mode_t mode;
+    cc3xx_aes_key_id_t key_id = CC3XX_AES_KEY_ID_USER_KEY;
+
+#ifdef CC3XX_CRYPTO_OPAQUE_KEYS
+    if (CC3XX_IS_OPAQUE_KEY(attributes)) {
+        size_t opaque_key_id = (size_t)key_buffer;
+        key_id = (cc3xx_aes_key_id_t)cc3xx_get_builtin_key(opaque_key_id);
+
+        if (CC3XX_IS_OPAQUE_KEY_INVALID(key_id)) {
+            return PSA_ERROR_INVALID_ARGUMENT;
+        }
+    }
+#endif /* CC3XX_CRYPTO_OPAQUE_KEYS */
 
     switch (key_buffer_size) {
     case 16:
@@ -72,6 +85,8 @@ static psa_status_t cc3xx_internal_aes_setup(
     default:
         return PSA_ERROR_INVALID_ARGUMENT;
     }
+
+    memset(state, 0, sizeof(struct cc3xx_aes_state_t));
 
     switch (alg) {
 #if defined(PSA_WANT_ALG_CBC_NO_PADDING)
@@ -117,9 +132,13 @@ static psa_status_t cc3xx_internal_aes_setup(
     state->direction = (dir == PSA_CRYPTO_DRIVER_ENCRYPT) ?
                 CC3XX_AES_DIRECTION_ENCRYPT : CC3XX_AES_DIRECTION_DECRYPT;
     state->key_size = key_size;
+    state->key_id = key_id;
 
-    cc3xx_dpa_hardened_word_copy(state->key_buf, (uint32_t *)key_buffer,
-                                 key_buffer_size / sizeof(uint32_t));
+    if (key_id == CC3XX_AES_KEY_ID_USER_KEY) {
+        cc3xx_dpa_hardened_word_copy(state->key_buf, (uint32_t *)key_buffer,
+                                     key_buffer_size / sizeof(uint32_t));
+    }
+
     return PSA_SUCCESS;
 }
 #endif /* PSA_WANT_KEY_TYPE_AES */
@@ -145,12 +164,14 @@ static psa_status_t cc3xx_internal_chacha_setup(
     psa_algorithm_t alg,
     psa_encrypt_or_decrypt_t dir)
 {
-    psa_algorithm_t default_alg = PSA_ALG_AEAD_WITH_DEFAULT_LENGTH_TAG(alg);
+    const psa_algorithm_t default_alg = PSA_ALG_AEAD_WITH_DEFAULT_LENGTH_TAG(alg);
     cc3xx_chacha_mode_t mode;
 
     if (key_buffer_size != CC3XX_CHACHA_KEY_SIZE) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
+
+    memset(state, 0, sizeof(struct cc3xx_chacha_state_t));
 
     switch (alg) {
 #if defined(PSA_WANT_ALG_STREAM_CIPHER)
@@ -272,6 +293,11 @@ psa_status_t cc3xx_internal_cipher_setup_init(
     if (alg == PSA_ALG_CBC_PKCS7) {
         memset(operation->pkcs7_last_block, 0, sizeof(operation->pkcs7_last_block));
         operation->pkcs7_last_block_size = 0;
+#if defined(CC3XX_CONFIG_CBC_PKCS7_DECRYPT_ARBITRARY_LENGTHS)
+        operation->pkcs7_ring_buf.read_offset = 0;
+        operation->pkcs7_ring_buf.write_offset = 0;
+        operation->pkcs7_ring_buf.count = 0;
+#endif /* CC3XX_CONFIG_CBC_PKCS7_DECRYPT_ARBITRARY_LENGTHS */
     }
 #endif /* PSA_WANT_ALG_CBC_PKCS7 */
 
@@ -352,6 +378,11 @@ psa_status_t cc3xx_internal_cipher_setup_set_iv(
 #endif /* PSA_WANT_KEY_TYPE_CHACHA20 */
 #if defined(PSA_WANT_KEY_TYPE_AES)
     case PSA_KEY_TYPE_AES:
+        /* At this point we assume that the mode is valid, otherwise we are in a bad state */
+        if (cc3xx_lowlevel_aes_valid_iv_length(operation->aes.mode, iv_length)
+                                                    == CC3XX_ERR_INVALID_IV_LENGTH) {
+            return PSA_ERROR_INVALID_ARGUMENT;
+        }
 
         cc3xx_dpa_hardened_word_copy(operation->aes.iv, (uint32_t *)iv,
                                      iv_length / sizeof(uint32_t));
@@ -364,6 +395,14 @@ psa_status_t cc3xx_internal_cipher_setup_set_iv(
         }
 
         operation->iv_length = iv_length;
+
+#if !defined(CC3XX_CONFIG_AES_TUNNELLING_ENABLE) && defined(PSA_WANT_ALG_CCM)
+        if ((operation->key_type == PSA_KEY_TYPE_AES) &&
+            (operation->aes.mode == CC3XX_AES_MODE_CCM)) {
+            c3xx_lowlevel_aes_ccm_init_ctr((uint8_t *)operation->aes.ctr, iv, iv_length);
+        }
+#endif /* !CC3XX_CONFIG_AES_TUNNELLING_ENABLE && PSA_WANT_ALG_CCM */
+
         return PSA_SUCCESS;
 #endif /* PSA_WANT_KEY_TYPE_AES */
 
@@ -421,9 +460,13 @@ psa_status_t cc3xx_internal_cipher_setup_complete(
 #endif /* PSA_WANT_KEY_TYPE_CHACHA20 */
 #if defined(PSA_WANT_KEY_TYPE_AES)
         case PSA_KEY_TYPE_AES:
+        {
+            uint32_t *key_buf = (operation->aes.key_id == CC3XX_AES_KEY_ID_USER_KEY) ?
+                                operation->aes.key_buf : NULL;
+
             err = cc3xx_lowlevel_aes_init(operation->aes.direction,
-                                          operation->aes.mode, CC3XX_AES_KEY_ID_USER_KEY,
-                                          operation->aes.key_buf, operation->aes.key_size,
+                                          operation->aes.mode, operation->aes.key_id,
+                                          key_buf, operation->aes.key_size,
                                           operation->aes.iv, operation->iv_length);
             if (err != CC3XX_ERR_SUCCESS) {
                 return cc3xx_to_psa_err(err);
@@ -441,6 +484,7 @@ psa_status_t cc3xx_internal_cipher_setup_complete(
             }
 #endif /* PSA_WANT_ALG_CCM */
             break;
+        }
 #endif /* PSA_WANT_KEY_TYPE_AES */
         default:
             (void)err;
@@ -497,8 +541,7 @@ psa_status_t cc3xx_internal_cipher_stream_pre_update(
     if (size_to_pre_process) {
         uint8_t permutation_buf[size_to_pre_process]; /* This is a VLA */
 
-        cc3xx_lowlevel_rng_get_random_permutation(permutation_buf, size_to_pre_process,
-                                                  CC3XX_RNG_FAST);
+        cc3xx_lowlevel_rng_get_random_permutation(permutation_buf, size_to_pre_process);
 
         for (idx = 0; idx < size_to_pre_process; idx++) {
             output[permutation_buf[idx]] =
@@ -540,9 +583,7 @@ psa_status_t cc3xx_internal_cipher_stream_post_update(
             return PSA_ERROR_HARDWARE_FAILURE;
         }
 
-        cc3xx_lowlevel_rng_get_random_permutation(permutation_buf,
-                                                  input_length - processed_length,
-                                                  CC3XX_RNG_FAST);
+        cc3xx_lowlevel_rng_get_random_permutation(permutation_buf, input_length - processed_length);
 
         for (idx = 0; idx < input_length - processed_length; idx++) {
             output[processed_length + permutation_buf[idx]] =

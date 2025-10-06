@@ -22,7 +22,7 @@
 #ifdef TFM_MEASURED_BOOT_API
 #include "region_defs.h"
 #include "tfm_boot_status.h"
-#include "boot_measurement.h"
+#include "tfm_boot_measurement.h"
 #endif /* TFM_MEASURED_BOOT_API */
 
 #ifndef TFM_BL1_MEMORY_MAPPED_FLASH
@@ -156,7 +156,7 @@ __WEAK void boot_platform_start_next_image(struct boot_arm_vector_table *vt)
 
 __WEAK __NO_RETURN void boot_platform_error_state(uint32_t error)
 {
-    ERROR("Fatal boot error %d\r\n", error);
+    ERROR("Fatal boot error %x\r\n", error);
     while(1){}
 }
 

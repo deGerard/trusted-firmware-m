@@ -29,7 +29,7 @@
 #define CC3XX_CONFIG_AES_CTR_ENABLE
 
 /* Whether the AES ECB support is enabled */
-/* #define CC3XX_CONFIG_AES_ECB_ENABLE */
+#define CC3XX_CONFIG_AES_ECB_ENABLE
 
 /* Whether the AES CBC support is enabled */
 /* #define CC3XX_CONFIG_AES_CBC_ENABLE */
@@ -79,13 +79,16 @@
 /* Whether RNG is enabled */
 #define CC3XX_CONFIG_RNG_ENABLE
 
-/* Whether the Continuous Health Tests as per SP800-90B are enabled */
-/* #define CC3XX_CONFIG_RNG_CONTINUOUS_HEALTH_TESTS_ENABLE */
+/* Collect TRNG error statistics */
+/* #define CC3XX_CONFIG_TRNG_COLLECT_STATISTCS */
+
+/* Generate entropy to RNG SRAM, and copy it to destination via DMA */
+/* #define CC3XX_CONFIG_TRNG_DMA */
 
 /* Whether RNG uses HMAC_DRBG when RNG_DRBG is selected */
-#define CC3XX_CONFIG_RNG_DRBG_HMAC
+/* #define CC3XX_CONFIG_RNG_DRBG_HMAC */
 /* Whether RNG uses CTR_DRBG when RNG_DRBG is selected */
-/* #define CC3XX_CONFIG_RNG_DRBG_CTR */
+#define CC3XX_CONFIG_RNG_DRBG_CTR
 /* Whether RNG uses HASH_DRBG when RNG_DRBG is selected */
 /* #define CC3XX_CONFIG_RNG_DRBG_HASH */
 
@@ -230,5 +233,8 @@
 
 /* Whether the present hardware is a CC310 */
 /* #define CC3XX_CONFIG_HW_VERSION_CC310 */
+
+/* Whether Opaque keys are enabled or not */
+#define CC3XX_CRYPTO_OPAQUE_KEYS
 
 #endif /* CC3XX_CONFIG_H */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024, Arm Limited. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -13,22 +13,18 @@
 #include "device_definition.h"
 #include "rse_clocks.h"
 #include "rse_sam_config.h"
-#ifdef TFM_PARTITION_PROTECTED_STORAGE
-#include "host_base_address.h"
-#endif /* TFM_PARTITION_PROTECTED_STORAGE */
+#include "atu_config.h"
 
 #ifdef TFM_PARTITION_PROTECTED_STORAGE
-#define RSE_ATU_REGION_PS_SLOT  16
+#define RSE_ATU_REGION_PS_SLOT  1
 #endif /* TFM_PARTITION_PROTECTED_STORAGE */
 
 extern const struct memory_region_limits memory_regions;
 
 enum tfm_hal_status_t tfm_hal_platform_init(void)
 {
-    enum tfm_plat_err_t plat_err = TFM_PLAT_ERR_SYSTEM_ERR;
-#ifdef TFM_PARTITION_PROTECTED_STORAGE
     enum atu_error_t err;
-#endif /* TFM_PARTITION_PROTECTED_STORAGE */
+    enum tfm_plat_err_t plat_err = TFM_PLAT_ERR_SYSTEM_ERR;
 
     if (rse_clock_config() != 0) {
         return TFM_HAL_ERROR_GENERIC;
@@ -48,6 +44,11 @@ enum tfm_hal_status_t tfm_hal_platform_init(void)
     plat_err = init_debug();
     if (plat_err != TFM_PLAT_ERR_SUCCESS) {
         return TFM_HAL_ERROR_GENERIC;
+    }
+
+    err = atu_rse_drv_init(&ATU_DEV_S, ATU_DOMAIN_ROOT, atu_regions_static, atu_stat_count);
+    if (err != ATU_ERR_NONE) {
+        return err;
     }
 
     __enable_irq();
@@ -73,24 +74,12 @@ enum tfm_hal_status_t tfm_hal_platform_init(void)
         return TFM_HAL_ERROR_GENERIC;
     }
 
-#ifdef TFM_PARTITION_PROTECTED_STORAGE
-    /* Initialize PS region */
-    err = atu_initialize_region(&ATU_DEV_S,
-                                RSE_ATU_REGION_PS_SLOT,
-                                HOST_ACCESS_PS_BASE_S,
-                                HOST_FLASH0_PS_BASE,
-                                HOST_FLASH0_PS_SIZE);
-    if (err != ATU_ERR_NONE) {
-        return TFM_HAL_ERROR_GENERIC;
-    }
-#endif /* TFM_PARTITION_PROTECTED_STORAGE */
-
     return TFM_HAL_SUCCESS;
 }
 
 uint32_t tfm_hal_get_ns_VTOR(void)
 {
-#ifndef RSE_LOAD_NS_IMAGE
+#ifndef TFM_LOAD_NS_IMAGE
     /* If an NS image hasn't been set up, then just return 0 */
     return 0;
 #endif
@@ -100,7 +89,7 @@ uint32_t tfm_hal_get_ns_VTOR(void)
 
 uint32_t tfm_hal_get_ns_MSP(void)
 {
-#ifndef RSE_LOAD_NS_IMAGE
+#ifndef TFM_LOAD_NS_IMAGE
     /* If an NS image hasn't been set up, then just return 0 */
     return 0;
 #endif
@@ -110,7 +99,7 @@ uint32_t tfm_hal_get_ns_MSP(void)
 
 uint32_t tfm_hal_get_ns_entry_point(void)
 {
-#ifndef RSE_LOAD_NS_IMAGE
+#ifndef TFM_LOAD_NS_IMAGE
     /* If an NS image hasn't been set up, then just return 0 */
     return 0;
 #endif

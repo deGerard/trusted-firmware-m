@@ -1,6 +1,6 @@
 #-------------------------------------------------------------------------------
+# SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
 # Copyright (c) 2020, IAR Systems AB. All rights reserved.
-# Copyright (c) 2020-2024, Arm Limited. All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 #
@@ -28,6 +28,9 @@ set(LINKER_VENEER_OUTPUT_FLAG --import_cmse_lib_out= )
 set(COMPILER_CMSE_FLAG --cmse)
 
 set(CMAKE_C_FLAGS_DEBUG "-r -On")
+
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+include(imported_target)
 
 # This variable name is a bit of a misnomer. The file it is set to is included
 # at a particular step in the compiler initialisation. It is used here to
@@ -192,6 +195,7 @@ macro(target_add_scatter_file target)
         set_source_files_properties(${SCATTER_FILE_PATH}
             PROPERTIES
             LANGUAGE C
+            KEEP_EXTENSION True # Don't use .o extension for the preprocessed file
         )
     endforeach()
 
@@ -238,7 +242,7 @@ macro(add_convert_to_bin_target target)
             ${bin_dir}/${target}.elf
     )
 
-    add_custom_target(${target}_hex
+    add_custom_target(${target}_hex_build
         SOURCES ${bin_dir}/${target}.hex
     )
     add_custom_command(OUTPUT ${bin_dir}/${target}.hex
@@ -248,6 +252,8 @@ macro(add_convert_to_bin_target target)
             --ihex $<TARGET_FILE:${target}>
             ${bin_dir}/${target}.hex
     )
+
+    add_imported_target(${target}_hex ${target}_hex_build "${bin_dir}/${target}.hex")
 
     add_custom_target(${target}_binaries
         ALL

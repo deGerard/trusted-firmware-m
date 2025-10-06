@@ -1,5 +1,5 @@
 #-------------------------------------------------------------------------------
-# Copyright (c) 2020-2024, Arm Limited. All rights reserved.
+# SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
 #
 # SPDX-License-Identifier: BSD-3-Clause
 #
@@ -70,6 +70,8 @@ target_include_directories(platform_s
 )
 
 target_sources(platform_s
+    INTERFACE
+        $<$<STREQUAL:"${TFM_FIH_PROFILE}","HIGH">:${PLATFORM_DIR}/ext/common/template/tfm_fih_platform.c>
     PRIVATE
         tfm_peripherals_def.c
         CMSIS_Driver/Driver_QSPI_Flash.c
@@ -84,6 +86,7 @@ target_sources(platform_s
         Native_Driver/qspi_ip6514e_drv.c
         Native_Driver/musca_b1_scc_drv.c
         Native_Driver/ppc_sse200_drv.c
+        ${CMAKE_SOURCE_DIR}/secure_fw/shared/crt_strcmp.c
         ${PLATFORM_DIR}/ext/target/arm/drivers/usart/pl011/uart_pl011_drv.c
         $<$<NOT:$<BOOL:${TFM_PARTITION_SLIH_TEST}>>:${PLATFORM_DIR}/ext/target/arm/drivers/timer/cmsdk/timer_cmsdk_drv.c>
         $<$<OR:$<BOOL:${TFM_S_REG_TEST}>,$<BOOL:${TFM_NS_REG_TEST}>>:${CMAKE_CURRENT_SOURCE_DIR}/plat_test.c>

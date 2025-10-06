@@ -91,9 +91,18 @@ allocate resources within the SPE. The manifest includes the following:
    requirement of PSA FF.
 
 .. Note::
-   The users can use LOW, NORMAL and HIGH to determine the priority of the Secure Partition
-   in manifest. They are replaced by 01, 02 and 03 automatically when parsing manifest
-   lists for section naming.
+   The users can set LOW, NORMAL or HIGH in ``priority`` attribute in a Secure
+   Partition manifest.
+
+   The manifest tool ``tools/tfm_parse_manifest_list.py`` calculates the load
+   priority of Secure Partitions based on their ``priority`` values and their
+   dependencies.
+   SPM determines the loading and initialization order of Secure Partitions
+   based on their load priority values during TF-M initialization.
+
+   - A Secure Partition with a higher ``priority`` is loaded and initialized
+     before Secure Partitions with lower ``priority``.
+   - A Secure Partition is loaded and initialized after its dependencies are.
 
 Here is a manifest reference example for the IPC model:
 
@@ -345,7 +354,7 @@ configuration for this Secure Partition.
 
 Here is a reference example for `CMakeLists.txt`_
 
-.. _CMakeLists.txt: https://git.trustedfirmware.org/TF-M/tf-m-extras.git/tree/examples/example_partition/CMakeLists.txt
+.. _CMakeLists.txt: https://git.trustedfirmware.org/plugins/gitiles/TF-M/tf-m-extras/+/refs/heads/main/examples/example_partition/CMakeLists.txt
 
 The CMake file should include the following contents
 
@@ -639,12 +648,12 @@ Test suites and test partitions
 
 A regression test suite can be added to verify whether the new secure partition
 works as expected. Refer to
-`Adding TF-M Regression Test Suite <https://git.trustedfirmware.org/TF-M/tf-m-tests.git/tree/docs/tfm_test_suites_addition.rst>`_
+`Adding TF-M Regression Test Suite <https://trustedfirmware-m.readthedocs.io/projects/tf-m-tests/en/latest/tfm_test_suites_addition.html#adding-a-new-test-suite>`_
 for the details of adding a regression test suite.
 
 Some regression tests require a dedicated RoT service. The implementations of
 the RoT service for test are similar to secure partition addition. Refer to
-`Adding partitions for regression tests <https://git.trustedfirmware.org/TF-M/tf-m-tests.git/tree/docs/tfm_test_partitions_addition.rst>`_
+`Adding partitions for regression tests <https://trustedfirmware-m.readthedocs.io/projects/tf-m-tests/en/latest/tfm_test_partitions_addition.html>`_
 to get more information.
 
 Out-of-tree Secure Partition build
@@ -782,6 +791,4 @@ Reference
 
 --------------
 
-*Copyright (c) 2019-2022, Arm Limited. All rights reserved.*
-*Copyright (c) 2022 Cypress Semiconductor Corporation (an Infineon company)
-or an affiliate of Cypress Semiconductor Corporation. All rights reserved.*
+*SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributor*

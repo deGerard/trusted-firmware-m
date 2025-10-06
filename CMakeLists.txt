@@ -1,7 +1,5 @@
 #-------------------------------------------------------------------------------
 # SPDX-FileCopyrightText: Copyright The TrustedFirmware-M Contributors
-# Copyright (c) 2022 Cypress Semiconductor Corporation (an Infineon company)
-# or an affiliate of Cypress Semiconductor Corporation. All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 #
@@ -37,24 +35,24 @@ include(config/post_config.cmake)
 
 include(${TFM_TOOLCHAIN_FILE})
 
-set(CMAKE_C_COMPILER_FORCED true)
-set(CMAKE_CXX_COMPILER_FORCED true)
-
 project("Trusted Firmware M" VERSION ${TFM_VERSION} LANGUAGES C CXX ASM)
 
-add_subdirectory(lib/backtrace)
 add_subdirectory(lib/ext)
+
+if(BL2)
+    add_subdirectory(bl2)
+endif()
+
+add_subdirectory(lib/backtrace)
+
 add_subdirectory(lib/fih)
 add_subdirectory(lib/tfm_log)
 add_subdirectory(lib/tfm_log_unpriv)
 add_subdirectory(lib/tfm_vprintf)
+add_subdirectory(lib/tfm_helper_lib)
 add_subdirectory(tools)
 add_subdirectory(secure_fw)
-
 add_subdirectory(interface)
-if(BL2)
-    add_subdirectory(bl2)
-endif()
 
 if(BL1 AND PLATFORM_DEFAULT_BL1)
     add_subdirectory(bl1/bl1_2)
@@ -77,4 +75,4 @@ include(${CMAKE_SOURCE_DIR}/config/check_config.cmake)
 
 ################################################################################
 
-include(cmake/install.cmake)
+include(install)

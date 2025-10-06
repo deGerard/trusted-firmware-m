@@ -12,6 +12,9 @@ cmake_minimum_required(VERSION 3.21)
 
 include(spe_config)
 include(spe_export)
+include(hex_generator)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "" FORCE)
 
 set_target_properties(tfm_config psa_interface psa_crypto_config PROPERTIES IMPORTED_GLOBAL True)
 target_link_libraries(tfm_config INTERFACE psa_interface)
@@ -20,6 +23,7 @@ target_link_libraries(tfm_config INTERFACE psa_interface)
 # exported by TF-M build.
 set(INTERFACE_SRC_DIR    ${CMAKE_CURRENT_LIST_DIR}/interface/src)
 set(INTERFACE_INC_DIR    ${CMAKE_CURRENT_LIST_DIR}/interface/include)
+set(PLATFORM_DIR         ${CMAKE_CURRENT_LIST_DIR}/platform)
 if (DEFINED NS_TARGET_NAME)
     message(STATUS "Using NS_TARGET_NAME: ${NS_TARGET_NAME}")
 else()
@@ -46,31 +50,66 @@ target_include_directories(tfm_api_ns
 )
 
 if (CONFIG_TFM_USE_TRUSTZONE)
-    add_library(tfm_api_ns_tz INTERFACE)
+    add_library(tfm_api_ns_tz STATIC)
 
     target_sources(tfm_api_ns_tz
-        INTERFACE
+        PUBLIC
             ${INTERFACE_SRC_DIR}/tfm_tz_psa_ns_api.c
     )
 
+    target_include_directories(tfm_api_ns_tz
+        PUBLIC
+            ${INTERFACE_INC_DIR}
+    )
+
     target_link_libraries(tfm_api_ns_tz
-        INTERFACE
+        PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/interface/lib/s_veneers.o
     )
 endif()
 
+if (TFM_HYBRID_PLATFORM_API_BROKER)
+    add_library(tfm_api_broker STATIC)
+    target_sources(tfm_api_broker
+        PUBLIC
+            ${INTERFACE_SRC_DIR}/hybrid_platform/api_broker.c
+    )
+
+    target_compile_definitions(tfm_api_broker
+        PUBLIC
+            TFM_HYBRID_PLATFORM_API_BROKER
+    )
+
+    target_include_directories(tfm_api_broker
+        PUBLIC
+            ${INTERFACE_INC_DIR}
+    )
+
+    target_link_libraries(tfm_api_ns_tz PUBLIC tfm_api_broker)
+
+endif()
+
 if (TFM_PARTITION_NS_AGENT_MAILBOX)
-    add_library(tfm_api_ns_mailbox INTERFACE)
+    add_library(tfm_api_ns_mailbox STATIC)
 
     target_sources(tfm_api_ns_mailbox
-        INTERFACE
+        PUBLIC
             ${INTERFACE_SRC_DIR}/multi_core/tfm_multi_core_ns_api.c
             ${INTERFACE_SRC_DIR}/multi_core/tfm_multi_core_psa_ns_api.c
+            ${INTERFACE_SRC_DIR}/multi_core/tfm_ns_mailbox.c
+            ${INTERFACE_SRC_DIR}/multi_core/platform_ns_mailbox.c
     )
 
     target_include_directories(tfm_api_ns_mailbox
-        INTERFACE
+        PUBLIC
+            ${INTERFACE_INC_DIR}
             ${INTERFACE_INC_DIR}/multi_core
+            ${PLATFORM_DIR}/ext/cmsis/Include
+    )
+
+    target_compile_definitions(tfm_api_ns_mailbox
+        PUBLIC
+            $<$<BOOL:${TFM_HYBRID_PLATFORM_API_BROKER}>:TFM_HYBRID_PLATFORM_API_BROKER>
     )
 endif()
 
@@ -153,48 +192,73 @@ if(BL2 AND PLATFORM_DEFAULT_IMAGE_SIGNING)
         set(S_NS_SIGNED_TARGET_NAME tfm_s_ns_signed)
     endif()
 
+    add_convert_to_offset_hex_target(tfm_s_ns_signed
+        INPUT_FILE          ${CMAKE_BINARY_DIR}/tfm_s_ns_signed.bin
+        OFFSET_MACRO_NAME   S_CODE_START
+        INCLUDE_BL2_HEADER  TRUE
+        MIRROR_FILE         $<TARGET_PROPERTY:${NS_TARGET_NAME},LINK_DEPENDS>
+        OUTPUT_FILE         ${CMAKE_BINARY_DIR}/tfm_s_ns_signed.hex
+    )
+
     add_custom_command(
-        TARGET tfm_s_ns_signed_bin
+        TARGET tfm_s_ns_signed_hex_build
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy
             ${CMAKE_BINARY_DIR}/tfm_s_ns_signed.bin
             $<TARGET_FILE_DIR:${NS_TARGET_NAME}>/${S_NS_SIGNED_TARGET_NAME}.bin
+        COMMAND ${CMAKE_COMMAND} -E copy
+            ${CMAKE_BINARY_DIR}/tfm_s_ns_signed.hex
+            $<TARGET_FILE_DIR:${NS_TARGET_NAME}>/${S_NS_SIGNED_TARGET_NAME}.hex
     )
 
     if (MCUBOOT_IMAGE_NUMBER GREATER 1)
+
+        set(wrapper_args
+            --version ${MCUBOOT_IMAGE_VERSION_NS}
+            --layout ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/layout_files/signing_layout_ns.o
+            --key ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/keys/image_ns_signing_private_key.pem
+            --public-key-format $<IF:$<BOOL:${MCUBOOT_HW_KEY}>,full,hash>
+            --align ${MCUBOOT_ALIGN_VAL}
+            --pad
+            --pad-header
+            -H ${BL2_HEADER_SIZE}
+            -s ${MCUBOOT_SECURITY_COUNTER_NS}
+            -L ${MCUBOOT_ENC_KEY_LEN}
+            -d \"\(0, ${MCUBOOT_S_IMAGE_MIN_VER}\)\"
+            $<$<STREQUAL:${MCUBOOT_UPGRADE_STRATEGY},OVERWRITE_ONLY>:--overwrite-only>
+            $<$<BOOL:${MCUBOOT_CONFIRM_IMAGE}>:--confirm>
+            $<$<BOOL:${MCUBOOT_ENC_IMAGES}>:-E${MCUBOOT_KEY_ENC_NS}>
+            $<$<BOOL:${MCUBOOT_MEASURED_BOOT}>:--measured-boot-record>
+            $<TARGET_FILE_DIR:${NS_TARGET_NAME}>/${NS_TARGET_NAME}.bin
+            ${CMAKE_BINARY_DIR}/bin/${NS_TARGET_NAME}_signed.bin
+        )
+
+        if(MCUBOOT_BUILTIN_KEY)
+            set(wrapper_args ${wrapper_args} --psa-key-ids ${TFM_NS_KEY_ID})
+        endif()
 
         add_custom_target(${NS_TARGET_NAME}_signed_bin
             SOURCES ${CMAKE_BINARY_DIR}/bin/${NS_TARGET_NAME}_signed.bin
         )
         add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/bin/${NS_TARGET_NAME}_signed.bin
             DEPENDS ${NS_TARGET_NAME}_bin
-            DEPENDS $<TARGET_FILE_DIR:${NS_TARGET_NAME}>/${NS_TARGET_NAME}.bin
             DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/layout_files/signing_layout_ns.o
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/scripts
 
             #Sign non-secure binary image with provided secret key
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/scripts/wrapper/wrapper.py
-                --version ${MCUBOOT_IMAGE_VERSION_NS}
-                --layout ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/layout_files/signing_layout_ns.o
-                --key ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/keys/image_ns_signing_private_key.pem
-                --public-key-format $<IF:$<BOOL:${MCUBOOT_HW_KEY}>,full,hash>
-                --align ${MCUBOOT_ALIGN_VAL}
-                --pad
-                --pad-header
-                -H ${BL2_HEADER_SIZE}
-                -s ${MCUBOOT_SECURITY_COUNTER_NS}
-                -L ${MCUBOOT_ENC_KEY_LEN}
-                -d \"\(0, ${MCUBOOT_S_IMAGE_MIN_VER}\)\"
-                $<$<STREQUAL:${MCUBOOT_UPGRADE_STRATEGY},OVERWRITE_ONLY>:--overwrite-only>
-                $<$<BOOL:${MCUBOOT_CONFIRM_IMAGE}>:--confirm>
-                $<$<BOOL:${MCUBOOT_ENC_IMAGES}>:-E${CMAKE_CURRENT_SOURCE_DIR}/image_signing/keys/image_enc_key.pem>
-                $<$<BOOL:${MCUBOOT_MEASURED_BOOT}>:--measured-boot-record>
-                $<TARGET_FILE_DIR:${NS_TARGET_NAME}>/${NS_TARGET_NAME}.bin
-                ${CMAKE_BINARY_DIR}/bin/${NS_TARGET_NAME}_signed.bin
+            COMMAND mcuboot_imagesign_wrapper ${wrapper_args}
+        )
+
+        add_convert_to_offset_hex_target(${NS_TARGET_NAME}_signed
+            INPUT_FILE          ${CMAKE_BINARY_DIR}/bin/${NS_TARGET_NAME}_signed.bin
+            OFFSET_MACRO_NAME   NS_CODE_START
+            INCLUDE_BL2_HEADER  TRUE
+            MIRROR_FILE         $<TARGET_PROPERTY:${NS_TARGET_NAME},LINK_DEPENDS>
+            OUTPUT_FILE         ${CMAKE_BINARY_DIR}/bin/${NS_TARGET_NAME}_signed.hex
         )
 
         # Create concatenated binary image from the two independently signed
-        # binary file. This only uses the local assemble.py script (not from
+        # binary file. This only uses the local assemble script (not from
         # upstream mcuboot) because that script is geared towards zephyr
         # support
         add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/tfm_s_ns_signed.bin
@@ -203,11 +267,14 @@ if(BL2 AND PLATFORM_DEFAULT_IMAGE_SIGNING)
             DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/layout_files/signing_layout_s.o
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/scripts
 
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/scripts/assemble.py
+            COMMAND mcuboot_imagesign_assemble
                 --layout ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/layout_files/signing_layout_s.o
                 --secure ${CMAKE_CURRENT_SOURCE_DIR}/bin/tfm_s_signed.bin
                 --non_secure ${CMAKE_BINARY_DIR}/bin/${NS_TARGET_NAME}_signed.bin
                 --output ${CMAKE_BINARY_DIR}/tfm_s_ns_signed.bin
+            COMMAND ${CMAKE_COMMAND} -E copy
+                ${CMAKE_BINARY_DIR}/tfm_s_ns_signed.bin
+                $<TARGET_FILE_DIR:${NS_TARGET_NAME}>/${S_NS_SIGNED_TARGET_NAME}.bin
         )
     else()
         add_custom_target(tfm_s_ns_bin
@@ -215,17 +282,40 @@ if(BL2 AND PLATFORM_DEFAULT_IMAGE_SIGNING)
         )
         add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/bin/tfm_s_ns.bin
             DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/bin/tfm_s.bin
-            DEPENDS ${NS_TARGET_NAME}_bin $<TARGET_FILE_DIR:${NS_TARGET_NAME}>/${NS_TARGET_NAME}.bin
+            DEPENDS ${NS_TARGET_NAME}_bin
             DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/layout_files/signing_layout_s_ns.o
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/scripts
 
             # concatenate S + NS binaries into tfm_s_ns.bin
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/scripts/assemble.py
+            COMMAND mcuboot_imagesign_assemble
                 --layout ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/layout_files/signing_layout_s_ns.o
                 --secure ${CMAKE_CURRENT_SOURCE_DIR}/bin/tfm_s.bin
                 --non_secure $<TARGET_FILE_DIR:${NS_TARGET_NAME}>/${NS_TARGET_NAME}.bin
                 --output ${CMAKE_BINARY_DIR}/bin/tfm_s_ns.bin
         )
+
+        set(wrapper_args
+            --version    ${MCUBOOT_IMAGE_VERSION_S}
+            --layout     ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/layout_files/signing_layout_s_ns.o
+            --key        ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/keys/image_s_signing_private_key.pem
+            --public-key-format  $<IF:$<BOOL:${MCUBOOT_HW_KEY}>,full,hash>
+            --align      ${MCUBOOT_ALIGN_VAL}
+            --pad
+            --pad-header
+            -H           ${BL2_HEADER_SIZE}
+            -s           ${MCUBOOT_SECURITY_COUNTER_S}
+            -L           ${MCUBOOT_ENC_KEY_LEN}
+            $<$<STREQUAL:${MCUBOOT_UPGRADE_STRATEGY},OVERWRITE_ONLY>:--overwrite-only>
+            $<$<BOOL:${MCUBOOT_CONFIRM_IMAGE}>:--confirm>
+            $<$<BOOL:${MCUBOOT_ENC_IMAGES}>:-E${MCUBOOT_KEY_ENC}>
+            $<$<BOOL:${MCUBOOT_MEASURED_BOOT}>:--measured-boot-record>
+            ${CMAKE_BINARY_DIR}/bin/tfm_s_ns.bin
+            ${CMAKE_BINARY_DIR}/tfm_s_ns_signed.bin
+        )
+
+        if(MCUBOOT_BUILTIN_KEY)
+            set(wrapper_args ${wrapper_args} --psa-key-ids ${TFM_S_KEY_ID})
+        endif()
 
         add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/tfm_s_ns_signed.bin
             DEPENDS tfm_s_ns_bin ${CMAKE_BINARY_DIR}/bin/tfm_s_ns.bin
@@ -233,24 +323,18 @@ if(BL2 AND PLATFORM_DEFAULT_IMAGE_SIGNING)
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/scripts
 
             # sign the combined tfm_s_ns.bin file
-            COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/scripts/wrapper/wrapper.py
-                --version ${MCUBOOT_IMAGE_VERSION_S}
-                --layout ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/layout_files/signing_layout_s_ns.o
-                --key ${CMAKE_CURRENT_SOURCE_DIR}/image_signing/keys/image_s_signing_private_key.pem
-                --public-key-format $<IF:$<BOOL:${MCUBOOT_HW_KEY}>,full,hash>
-                --align ${MCUBOOT_ALIGN_VAL}
-                --pad
-                --pad-header
-                -H ${BL2_HEADER_SIZE}
-                -s ${MCUBOOT_SECURITY_COUNTER_S}
-                -L ${MCUBOOT_ENC_KEY_LEN}
-                $<$<STREQUAL:${MCUBOOT_UPGRADE_STRATEGY},OVERWRITE_ONLY>:--overwrite-only>
-                $<$<BOOL:${MCUBOOT_CONFIRM_IMAGE}>:--confirm>
-                $<$<BOOL:${MCUBOOT_ENC_IMAGES}>:-E${CMAKE_CURRENT_SOURCE_DIR}/image_signing/keys/image_enc_key.pem>
-                $<$<BOOL:${MCUBOOT_MEASURED_BOOT}>:--measured-boot-record>
-                ${CMAKE_BINARY_DIR}/bin/tfm_s_ns.bin
+            COMMAND mcuboot_imagesign_wrapper ${wrapper_args}
+            COMMAND ${CMAKE_COMMAND} -E copy
                 ${CMAKE_BINARY_DIR}/tfm_s_ns_signed.bin
+                $<TARGET_FILE_DIR:${NS_TARGET_NAME}>/${S_NS_SIGNED_TARGET_NAME}.bin
         )
     endif()
+endif()
+
+if(TFM_MERGE_HEX_FILES)
+    merge_hex(merged_hex
+        OUTPUT         ${CMAKE_BINARY_DIR}/bin/combined.hex
+        INPUT_TARGETS  ${NS_TARGET_NAME}_signed_hex
+        INPUT_FILES    ${TFM_S_HEX_FILE_PATH}
+    )
 endif()

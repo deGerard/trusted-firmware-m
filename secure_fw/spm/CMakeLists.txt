@@ -103,9 +103,7 @@ target_link_libraries(tfm_spm
         tfm_boot_status
         tfm_config
         tfm_partitions
-        tfm_fih_headers
         tfm_sprt
-        $<$<NOT:$<STREQUAL:${TFM_FIH_PROFILE},OFF>>:tfm_fih>
 )
 
 target_compile_definitions(tfm_spm
@@ -123,6 +121,7 @@ target_compile_definitions(tfm_spm
         $<$<STREQUAL:${CONFIG_TFM_BRANCH_PROTECTION_FEAT},BRANCH_PROTECTION_PACRET>:BRANCH_PROTECTION_CONTROL=2>
         $<$<STREQUAL:${CONFIG_TFM_BRANCH_PROTECTION_FEAT},BRANCH_PROTECTION_PACRET_LEAF>:BRANCH_PROTECTION_CONTROL=2>
         $<$<STREQUAL:${CONFIG_TFM_BRANCH_PROTECTION_FEAT},BRANCH_PROTECTION_BTI>:BRANCH_PROTECTION_CONTROL=3>
+        $<$<BOOL:${PLATFORM_PSA_ADAC_SECURE_DEBUG}>:PLATFORM_PSA_ADAC_SECURE_DEBUG>
 )
 
 target_compile_options(tfm_spm

@@ -42,7 +42,7 @@ CMake. The version downloaded can be controlled by the ``MCUBOOT_VERSION``
 CMake variable. If you wish to use a locally downloaded copy, the CMake variable
 ``MCUBOOT_PATH`` can be set to its location. This document contains information
 about how MCUboot has been integrated to TF-M. For further information about
-MCUboot design please refer to the `MCUBoot homepage <https://www.mcuboot.com/>`__.
+MCUboot design please refer to the `MCUBoot homepage <https://www.trustedfirmware.org/projects/mcuboot/index.html>`__.
 
 Bootloader is started when CPU is released from reset. It runs in secure mode.
 It authenticates the firmware image by hash (SHA-256) and digital signature
@@ -247,8 +247,6 @@ modes are supported by which platforms:
 +---------------------+-----------------+---------------+----------+----------------+--------------+
 | Musca-B1            | Yes             | Yes           | Yes      | Yes            | No           |
 +---------------------+-----------------+---------------+----------+----------------+--------------+
-| Musca-S1            | Yes             | Yes           | Yes      | Yes            | No           |
-+---------------------+-----------------+---------------+----------+----------------+--------------+
 | AN524               | Yes             | No            | No       | Yes            | No           |
 +---------------------+-----------------+---------------+----------+----------------+--------------+
 | AN547               | No              | Yes           | Yes      | Yes            | No           |
@@ -264,8 +262,6 @@ modes are supported by which platforms:
 | nRF9160 DK          | Yes             | Yes           | No       | No             | No           |
 +---------------------+-----------------+---------------+----------+----------------+--------------+
 | nRF5340 DK          | Yes             | Yes           | No       | No             | No           |
-+---------------------+-----------------+---------------+----------+----------------+--------------+
-| BL5340 DVK          | Yes             | Yes           | Yes      | No             | No           |
 +---------------------+-----------------+---------------+----------+----------------+--------------+
 | RSE                 | No              | No            | No       | No             | Yes          |
 +---------------------+-----------------+---------------+----------+----------------+--------------+
@@ -725,8 +721,8 @@ Executing firmware upgrade on SSE 200 FPGA on MPS2 board
     IMAGE2ADDRESS: 0x10180000
     IMAGE2FILE: \Software\tfm_sig1.bin ; TF-M regression test binary blob
 
-Executing firmware upgrade on Musca-B1 and Musca-S1 boards
-----------------------------------------------------------
+Executing firmware upgrade on Musca-B1 boards
+---------------------------------------------
 After the two images have been built, they can be concatenated to create the
 combined image using ``srec_cat``:
 
